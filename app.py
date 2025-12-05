@@ -3,26 +3,39 @@ import pandas as pd
 import datetime
 import time
 import gspread
+import requests
 from oauth2client.service_account import ServiceAccountCredentials
+from streamlit_autorefresh import st_autorefresh
+
+# --- 0. 사용자 설정 (여기에 정보를 넣으세요) ---
+TELEGRAM_TOKEN = "7881566926:AAGddHamEsKk2hUDKSdaZqjYadZB7OJ-pXk" # 방금 그 토큰
+CHAT_ID = "7266417012" # <--- 아까 찾은 숫자 입력!
 
 # --- 1. 앱 기본 설정 ---
 st.set_page_config(page_title="CTA 합격 메이커", page_icon="📝", layout="wide")
 
-# --- 2. 구글 시트 연결 함수 ---
+# 1분(60초)마다 화면을 자동 새로고침해서 시간을 체크 (알림 발송용)
+st_autorefresh(interval=60000, key="time_check")
+
+# --- 2. 헬퍼 함수 ---
+def send_telegram_msg(message):
+    if not TELEGRAM_TOKEN or not CHAT_ID: return
+    try:
+        url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
+        params = {"chat_id": CHAT_ID, "text": message}
+        requests.get(url, params=params)
+    except Exception as e:
+        print(f"텔레그램 전송 실패: {e}")
+
 def save_to_google_sheets(date, total_seconds, status, wakeup_success):
     try:
-        # secrets가 없으면 로컬 테스트용 가짜 성공 반환 (에러 방지)
         if "gcp_service_account" not in st.secrets:
-            # st.warning("Secrets 설정이 안 되어 있어 저장이 건너뛰어집니다.") 
             return True 
-            
         scope = ['https://spreadsheets.google.com/feeds', 'https://www.googleapis.com/auth/drive']
         creds_dict = dict(st.secrets["gcp_service_account"])
         creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
         client = gspread.authorize(creds)
-        
         sheet = client.open("CTA_Study_Data").sheet1 
-        
         row = [str(date), round(total_seconds/3600, 2), status, "성공" if wakeup_success else "실패"]
         sheet.append_row(row)
         return True
@@ -30,17 +43,6 @@ def save_to_google_sheets(date, total_seconds, status, wakeup_success):
         st.error(f"저장 실패: {e}")
         return False
 
-# --- 3. 세션 상태 초기화 ---
-if 'tasks' not in st.session_state:
-    st.session_state.tasks = [] 
-if 'target_time' not in st.session_state:
-    st.session_state.target_time = 10.0
-if 'wakeup_checked' not in st.session_state:
-    st.session_state.wakeup_checked = False
-if 'd_day_date' not in st.session_state:
-    st.session_state.d_day_date = datetime.date(2026, 5, 1)
-
-# --- 4. 헬퍼 함수 ---
 def format_time(seconds):
     m, s = divmod(seconds, 60)
     h, m = divmod(m, 60)
@@ -53,7 +55,17 @@ def get_status_color(achieved, target):
     elif ratio >= 50: return "🟡 Normal"
     else: return "🔴 Bad"
 
-# --- 5. 사이드바 (설정) ---
+# --- 3. 세션 및 데이터 초기화 ---
+if 'tasks' not in st.session_state:
+    st.session_state.tasks = [] 
+if 'target_time' not in st.session_state:
+    st.session_state.target_time = 10.0
+if 'wakeup_checked' not in st.session_state:
+    st.session_state.wakeup_checked = False
+if 'd_day_date' not in st.session_state:
+    st.session_state.d_day_date = datetime.date(2026, 5, 1)
+
+# --- 4. 메인 UI 및 알림 로직 ---
 with st.sidebar:
     st.header("⚙️ 설정")
     new_d_day = st.date_input("시험 예정일 (D-Day)", value=st.session_state.d_day_date)
@@ -61,7 +73,6 @@ with st.sidebar:
         st.session_state.d_day_date = new_d_day
         st.rerun()
 
-# --- 6. 메인 UI 헤더 ---
 today = datetime.date.today()
 d_day_delta = (st.session_state.d_day_date - today).days
 d_day_str = f"D-{d_day_delta}" if d_day_delta > 0 else (f"D+{abs(d_day_delta)}" if d_day_delta < 0 else "D-Day")
@@ -70,25 +81,28 @@ st.title(f"📝 CTA 합격 메이커 ({d_day_str})")
 
 mode = st.radio("모드 선택", ["Daily View (오늘의 공부)", "Monthly View (대시보드)"], horizontal=True)
 
-# ---------------------------------------------------------
-# [모드 1] 데일리 뷰
-# ---------------------------------------------------------
+# [알림 체크 로직] - 앱이 켜져 있는 동안 매분 체크
+now_str = datetime.datetime.now().strftime("%H:%M")
+for task in st.session_state.tasks:
+    if "alert_sent" not in task: task["alert_sent"] = False
+    
+    # 시간이 같고 + 아직 안 보냈고 + 시작 전이면 알림 발송
+    if task['plan_time'] == now_str and not task['alert_sent']:
+        msg = f"🔔 [공부 시작 알림]\n지금은 '{task['task']}' 공부할 시간입니다!\n책상에 앉으세요! 🔥"
+        send_telegram_msg(msg)
+        task['alert_sent'] = True
+        st.toast(f"🔔 텔레그램 발송 완료: {task['task']}")
+
 if mode == "Daily View (오늘의 공부)":
     st.subheader(f"📅 {today.strftime('%Y-%m-%d')}")
     
-    # 1. 7시 기상 인증
     st.markdown("##### ☀️ 아침 루틴")
     is_wakeup = st.checkbox("7시 기상 성공!", value=st.session_state.wakeup_checked, key="wakeup_chk")
     st.session_state.wakeup_checked = is_wakeup 
-    
     st.divider()
 
-    # 2. 할 일 추가 (타임테이블 방식)
     st.markdown("##### ➕ 타임테이블 추가")
-    
-    # [수정됨] vertical_alignment="bottom" (이건 정상)
     col_input1, col_input2, col_btn = st.columns([1, 3, 1], vertical_alignment="bottom")
-    
     with col_input1:
         plan_time = st.time_input("시작 시간", value=datetime.time(9, 0))
     with col_input2:
@@ -101,35 +115,25 @@ if mode == "Daily View (오늘의 공부)":
                     "task": new_task,
                     "accumulated": 0,
                     "last_start": None,
-                    "is_running": False
+                    "is_running": False,
+                    "alert_sent": False
                 })
                 st.rerun()
 
     st.markdown("---")
-
-    # 3. 리스트 출력
     st.session_state.tasks.sort(key=lambda x: x['plan_time'])
 
     total_seconds = 0
-    
     for idx, task in enumerate(st.session_state.tasks):
-        # [수정됨] vertical_alignment="center" ("middle" -> "center"로 변경!)
         c1, c2, c3, c4 = st.columns([1, 3, 2, 0.5], vertical_alignment="center")
-        
-        with c1:
-            st.markdown(f"**⏰ {task['plan_time']}**")
-        
-        with c2:
-            st.markdown(f"{task['task']}")
-
+        with c1: st.markdown(f"**⏰ {task['plan_time']}**")
+        with c2: st.markdown(f"{task['task']}")
         with c3:
             current_duration = task['accumulated']
-            if task['is_running']:
-                current_duration += time.time() - task['last_start']
+            if task['is_running']: current_duration += time.time() - task['last_start']
             
             t_col1, t_col2 = st.columns([2, 1])
-            with t_col1:
-                st.markdown(f"⏱️ `{format_time(current_duration)}`")
+            with t_col1: st.markdown(f"⏱️ `{format_time(current_duration)}`")
             with t_col2:
                 if task['is_running']:
                     if st.button("⏹️", key=f"stop_{idx}"):
@@ -142,20 +146,15 @@ if mode == "Daily View (오늘의 공부)":
                         task['is_running'] = True
                         task['last_start'] = time.time()
                         st.rerun()
-
         with c4:
             if st.button("🗑️", key=f"del_{idx}"):
                 del st.session_state.tasks[idx]
                 st.rerun()
         
-        if task['is_running']:
-            total_seconds += (task['accumulated'] + (time.time() - task['last_start']))
-        else:
-            total_seconds += task['accumulated']
+        if task['is_running']: total_seconds += (task['accumulated'] + (time.time() - task['last_start']))
+        else: total_seconds += task['accumulated']
 
     st.divider()
-
-    # 4. 하루 마무리
     st.session_state.target_time = st.number_input("오늘 목표(시간)", min_value=1.0, value=st.session_state.target_time, step=0.5)
     total_hours = total_seconds / 3600
     status = get_status_color(total_hours, st.session_state.target_time)
@@ -169,11 +168,8 @@ if mode == "Daily View (오늘의 공부)":
         if save_to_google_sheets(today, total_seconds, status, st.session_state.wakeup_checked):
             st.success("✅ 저장되었습니다!")
         else:
-            st.error("저장 실패. (Secrets 설정을 확인하세요)")
+            st.error("저장 실패.")
 
-# ---------------------------------------------------------
-# [모드 2] 월간 뷰
-# ---------------------------------------------------------
 else:
     st.subheader("🗓️ 월간 기록 대시보드")
     try:
@@ -183,7 +179,6 @@ else:
             creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
             client = gspread.authorize(creds)
             sheet = client.open("CTA_Study_Data").sheet1
-            
             records = sheet.get_all_records()
             if records:
                 df = pd.DataFrame(records)
@@ -191,9 +186,6 @@ else:
                 if '기상성공여부' in df.columns:
                     success_count = len(df[df['기상성공여부'] == '성공'])
                     st.info(f"이번 달 기상 성공 횟수: {success_count}회")
-            else:
-                st.info("아직 저장된 기록이 없습니다.")
-        else:
-            st.warning("구글 시트 연동 설정(Secrets)이 필요합니다.")
-    except Exception as e:
-        st.warning(f"데이터 로드 중 오류: {e}")
+            else: st.info("아직 저장된 기록이 없습니다.")
+        else: st.warning("구글 시트 연동 설정(Secrets)이 필요합니다.")
+    except Exception as e: st.warning(f"데이터 로드 중 오류: {e}")
