@@ -63,9 +63,10 @@ def save_to_google_sheets(date, total_seconds, status, wakeup_success, tasks, ta
 
 def load_persistent_data():
     client = get_gspread_client()
+    # [수정] 21시 즐겨찾기 이름 수정 반영
     default_favorites = [
-        {"plan_time": "08:00", "task": "전일 복습 (백지)", "key": "08:00_전일 복습 (백지)"},
-        {"plan_time": "21:00", "task": "백지 복습", "key": "21:00_백지 복습"}
+        {"plan_time": "08:00", "task": "아침 백지 복습", "key": "08:00_아침 백지 복습"},
+        {"plan_time": "21:00", "task": "당일 학습 백지 복습", "key": "21:00_당일 학습 백지 복습"}
     ]
     if client is None: return get_default_tasks(), 10.0, datetime.date(2026, 5, 1), default_favorites, ""
 
@@ -273,7 +274,6 @@ if mode == "Daily View (오늘의 공부)":
 
     total_seconds = 0
     
-    # [수정] 순공 시간에서 제외할 활동 리스트 정의
     NON_STUDY_TASKS = [
         "점심 식사 및 신체 유지 (운동)", 
         "저녁 식사 및 익일 식사 준비"
@@ -309,7 +309,6 @@ if mode == "Daily View (오늘의 공부)":
                 del st.session_state.tasks[idx]
                 st.rerun()
         
-        # [수정] 순공 시간 합산 로직 (NON_STUDY_TASKS 제외)
         if task['task'] not in NON_STUDY_TASKS:
             if task['is_running']: total_seconds += (task['accumulated'] + (time.time() - task['last_start']))
             else: total_seconds += task['accumulated']
@@ -369,13 +368,19 @@ else:
             if records:
                 df = pd.DataFrame(records)
                 
-                columns_to_display = [col for col in df.columns if col not in ['Tasks_JSON', 'Target_Time', 'DDay_Date', 'Favorites_JSON', 'Daily_Reflection']]
+                # 1. 날짜 기준으로 그룹화하고 가장 최근 기록(last)만 필터링
+                # df_latest는 각 날짜의 유일한 최신 행을 담고 있음
+                df_latest = df.groupby('날짜').last().reset_index()
+
+                # 2. 표시할 컬럼 정의 (JSON/세팅값은 제외하고 Daily_Reflection은 포함)
+                columns_to_display = [col for col in df_latest.columns if col not in ['Tasks_JSON', 'Target_Time', 'DDay_Date', 'Favorites_JSON']]
                 
-                st.dataframe(df[columns_to_display], use_container_width=True)
+                st.dataframe(df_latest[columns_to_display], use_container_width=True)
                 
-                if '기상성공여부' in df.columns:
-                    success_count = len(df[df['기상성공여부'] == '성공'])
-                    st.info(f"누적 기록: {len(df)}일 | 기상 성공 횟수: {success_count}회")
+                if '기상성공여부' in df_latest.columns:
+                    # [수정] 누적 기록 일수도 필터링된 데이터프레임 (df_latest) 기반으로 계산
+                    success_count = len(df_latest[df_latest['기상성공여부'] == '성공'])
+                    st.info(f"누적 기록: {len(df_latest)}일 | 기상 성공 횟수: {success_count}회")
             else: st.info("아직 저장된 기록이 없습니다.")
         else: st.warning("구글 시트 연동 설정(Secrets)이 필요합니다.")
     except Exception as e: st.warning(f"데이터 로드 중 오류: {e}")
