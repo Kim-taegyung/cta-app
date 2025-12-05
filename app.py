@@ -59,7 +59,7 @@ def load_persistent_data():
         default_d_day = datetime.date(2026, 5, 1)
         default_favorites = [
             {"plan_time": "08:00", "task": "전일 복습 (백지)", "key": "08:00_전일 복습 (백지)"},
-            {"plan_time": "21:00", "task": "세법학 암기", "key": "21:00_세법학 암기"}
+            {"plan_time": "21:00", "task": "백지 복습", "key": "21:00_백지 복습"}
         ]
         
         if records:
@@ -344,3 +344,4 @@ else:
             else: st.info("아직 저장된 기록이 없습니다.")
         else: st.warning("구글 시트 연동 설정(Secrets)이 필요합니다.")
     except Exception as e: st.warning(f"데이터 로드 중 오류: {e}")
+
