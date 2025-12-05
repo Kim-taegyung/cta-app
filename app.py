@@ -353,6 +353,7 @@ with main_col:
         
         st.title(f"📝 {sel_date.strftime('%Y-%m-%d')} ({d_day_str})")
         
+       # --- [수정] 상단 루틴 체크 및 즐겨찾기 추가 ---
         c1, c2 = st.columns([1, 2])
         with c1:
             st.markdown("##### ☀️ 루틴 체크")
@@ -361,29 +362,37 @@ with main_col:
         with c2:
             st.markdown("##### 🚀 즐겨찾기 추가")
             if st.session_state.favorite_tasks:
-                fav_opts = [f"{t['plan_time']} - {t['task']}" for t in st.session_state.favorite_tasks]
-                sel_fav = st.selectbox("루틴 선택", ["선택하세요"] + fav_opts, label_visibility="collapsed")
+                # [UI 개선] 드롭다운에 카테고리까지 표시 (예: [CTA 공부] 09:00 - 아침...)
+                fav_labels = []
+                for t in st.session_state.favorite_tasks:
+                    cat = t.get('category', '미지정')
+                    fav_labels.append(f"[{cat}] {t['plan_time']} - {t['task']}")
+                
+                sel_fav_label = st.selectbox("루틴 선택", ["선택하세요"] + fav_labels, label_visibility="collapsed")
+                
                 if st.button("추가", use_container_width=True):
-                    if sel_fav != "선택하세요":
-                        t_time, t_task = sel_fav.split(" - ", 1)
-                        # 즐겨찾기에서 카테고리 정보 가져오기 (없으면 CTA 공부)
-                        # 선택된 fav task 찾기
-                        selected_fav_obj = next((item for item in st.session_state.favorite_tasks if item["plan_time"] == t_time and item["task"] == t_task), None)
-                        cat_val = selected_fav_obj.get("category", "CTA 공부") if selected_fav_obj else "CTA 공부"
+                    if sel_fav_label != "선택하세요":
+                        # [로직 개선] 문자열 파싱 대신 인덱스로 원본 데이터 찾기 (안전함)
+                        target_index = fav_labels.index(sel_fav_label)
+                        # fav_obj는 st.session_state.favorite_tasks[target_index] 와 같음
+                        fav_obj = st.session_state.favorite_tasks[target_index]
                         
+                        # 중복 시간 체크
                         existing_times = [t['plan_time'] for t in st.session_state.tasks]
-                        if t_time in existing_times:
-                            st.warning(f"⚠️ {t_time}에 이미 일정이 있습니다.")
+                        if fav_obj['plan_time'] in existing_times:
+                            st.warning(f"⚠️ {fav_obj['plan_time']}에 이미 일정이 있습니다.")
                         else:
                             st.session_state.tasks.append({
-                                "plan_time": t_time, 
-                                "category": cat_val,
-                                "task": t_task, 
+                                "plan_time": fav_obj['plan_time'], 
+                                "category": fav_obj.get('category', 'CTA 공부'), # 저장된 카테고리 적용
+                                "task": fav_obj['task'], 
                                 "accumulated": 0, 
                                 "last_start": None, 
                                 "is_running": False
                             })
                             st.rerun()
+            else:
+                st.info("👈 사이드바 '설정'에서 즐겨찾기 루틴을 만들어보세요.")
 
         st.markdown("---")
         
@@ -546,4 +555,5 @@ with chat_col:
             st.markdown(response)
         st.session_state.messages.append({"role": "assistant", "content": response})
         st.rerun()
+
 
