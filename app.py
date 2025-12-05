@@ -450,7 +450,7 @@ with main_col:
                             task['is_running'] = False
                             st.rerun()
                     else:
-                        if st.button("▶️ 시작", key=f"start_{i}", use_container_width=True, type="primary"):
+                        if st.button("▶️ 시작", key=f"start_{i}", use_container_width=True):
                             task['is_running'] = True
                             task['last_start'] = time.time()
                             st.rerun()
@@ -546,3 +546,4 @@ with chat_col:
             st.markdown(response)
         st.session_state.messages.append({"role": "assistant", "content": response})
         st.rerun()
+
