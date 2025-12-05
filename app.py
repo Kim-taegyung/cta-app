@@ -222,7 +222,6 @@ mode = st.radio("모드 선택", ["Daily View (오늘의 공부)", "Monthly View
 # ---------------------------------------------------------
 if mode == "Daily View (오늘의 공부)":
     st.subheader(f"📅 {today.strftime('%Y-%m-%d')}")
-    display_realtime_clock() 
     
     st.markdown("##### ☀️ 아침 루틴")
     is_wakeup = st.checkbox("7시 기상 성공!", value=st.session_state.wakeup_checked, key="wakeup_chk")
