@@ -20,14 +20,16 @@ def get_gspread_client():
     client = gspread.authorize(creds)
     return client
 
-def save_to_google_sheets(date, total_seconds, status, wakeup_success, tasks, target_time, d_day_date):
+def save_to_google_sheets(date, total_seconds, status, wakeup_success, tasks, target_time, d_day_date, favorite_tasks): # <--- favorite_tasks 추가
     try:
         client = get_gspread_client()
         if client is None: return True 
         sheet = client.open("CTA_Study_Data").sheet1 
         
         tasks_json = json.dumps(tasks)
+        favorites_json = json.dumps(favorite_tasks) # <--- 즐겨찾기 JSON 변환
         
+        # [수정] row에 favorites_json 추가
         row = [
             str(date), 
             round(total_seconds/3600, 2), 
@@ -35,7 +37,8 @@ def save_to_google_sheets(date, total_seconds, status, wakeup_success, tasks, ta
             "성공" if wakeup_success else "실패", 
             tasks_json,
             target_time, 
-            str(d_day_date) 
+            str(d_day_date),
+            favorites_json # <--- 저장
         ]
         sheet.append_row(row)
         return True
@@ -43,20 +46,25 @@ def save_to_google_sheets(date, total_seconds, status, wakeup_success, tasks, ta
         st.error(f"저장 실패: {e}")
         return False
 
-# [수정] 모든 지속성 데이터를 로드하는 통합 함수 (숫자형 오류 처리)
+# [수정] 모든 지속성 데이터를 로드하는 통합 함수 (favorites 추가)
 def load_persistent_data():
     client = get_gspread_client()
-    if client is None: return [], 10.0, datetime.date(2026, 5, 1)
+    if client is None: return [], 10.0, datetime.date(2026, 5, 1), []
 
     try:
         sheet = client.open("CTA_Study_Data").sheet1 
         records = sheet.get_all_records()
         
+        # 기본값 설정
         default_d_day = datetime.date(2026, 5, 1)
+        default_favorites = [
+            {"plan_time": "08:00", "task": "전일 복습 (백지)", "key": "08:00_전일 복습 (백지)"},
+            {"plan_time": "21:00", "task": "세법학 암기", "key": "21:00_세법학 암기"}
+        ]
         
         if records:
             df = pd.DataFrame(records)
-            last_record = df.iloc[-1] 
+            last_record = df.iloc[-1]
             today_date_str = datetime.date.today().strftime('%Y-%m-%d')
             
             # 1. Tasks 로드
@@ -67,13 +75,12 @@ def load_persistent_data():
                     task['is_running'] = False 
                     task['last_start'] = None
             
-            # 2. Settings 로드 (오류 방지를 위해 반드시 float/date로 형변환)
+            # 2. Settings 로드 (Target Time, D-Day)
             target_time_raw = last_record.get('Target_Time', 10.0) 
             try:
-                # Target_Time을 float으로 강제 변환 
                 target_time = float(target_time_raw)
             except (ValueError, TypeError):
-                target_time = 10.0 # 변환 실패 시 기본값
+                target_time = 10.0
             
             d_day_date_str = last_record.get('DDay_Date')
             d_day_date = default_d_day
@@ -82,14 +89,23 @@ def load_persistent_data():
                     d_day_date = datetime.datetime.strptime(str(d_day_date_str), '%Y-%m-%d').date()
                 except ValueError:
                     d_day_date = default_d_day
+
+            # 3. Favorites 로드
+            favorites = default_favorites
+            if last_record.get('Favorites_JSON'):
+                try:
+                    favorites = json.loads(last_record['Favorites_JSON'])
+                except:
+                    pass # JSON 오류 시 기본값 유지
             
-            return tasks, target_time, d_day_date
+            return tasks, target_time, d_day_date, favorites
             
-        return [], 10.0, default_d_day
+        return [], 10.0, default_d_day, default_favorites
 
     except Exception as e:
         # st.warning(f"데이터 로드 중 오류: {e}") 
-        return [], 10.0, datetime.date(2026, 5, 1)
+        # 로드 실패 시에도 기본값 반환
+        return [], 10.0, datetime.date(2026, 5, 1), default_favorites
 
 def format_time(seconds):
     m, s = divmod(seconds, 60)
@@ -104,7 +120,7 @@ def get_status_color(achieved, target):
     else: return "🔴 Bad"
 
 # --- 3. 세션 및 데이터 초기화 (앱 시작 시 데이터 로드) ---
-initial_tasks, initial_target_time, initial_d_day_date = load_persistent_data()
+initial_tasks, initial_target_time, initial_d_day_date, initial_favorites = load_persistent_data()
 
 if 'tasks' not in st.session_state:
     st.session_state.tasks = initial_tasks 
@@ -117,11 +133,10 @@ if 'd_day_date' not in st.session_state:
 
 if 'wakeup_checked' not in st.session_state:
     st.session_state.wakeup_checked = False
+    
+# [수정] 즐겨찾기 목록을 로드된 데이터로 초기화
 if 'favorite_tasks' not in st.session_state:
-    st.session_state.favorite_tasks = [
-        {"plan_time": "08:00", "task": "전일 복습 (백지)", "key": "08:00_전일 복습 (백지)"},
-        {"plan_time": "21:00", "task": "세법학 암기", "key": "21:00_세법학 암기"}
-    ]
+    st.session_state.favorite_tasks = initial_favorites
     
 # --- 4. 사이드바 (설정 & 즐겨찾기 관리) ---
 with st.sidebar:
@@ -142,6 +157,7 @@ with st.sidebar:
         fav_task = st.text_input("루틴 내용", placeholder="예: 백지 복습", key="fav_task")
         submitted = st.form_submit_button("즐겨찾기 추가")
         
+        # [수정] 즐겨찾기 추가 시 바로 세션에 반영
         if submitted and fav_task:
             new_fav = {
                 "plan_time": fav_time.strftime("%H:%M"), 
@@ -158,6 +174,8 @@ with st.sidebar:
     if st.session_state.favorite_tasks:
         fav_options = [f"{f['plan_time']} - {f['task']}" for f in st.session_state.favorite_tasks]
         fav_to_delete = st.multiselect("삭제할 루틴 선택", options=fav_options)
+        
+        # [수정] 즐겨찾기 삭제 시 바로 세션에 반영
         if st.button("선택 루틴 삭제", type="secondary"):
             if fav_to_delete:
                 keys_to_delete = [opt.split(" - ", 1) for opt in fav_to_delete]
@@ -275,7 +293,6 @@ if mode == "Daily View (오늘의 공부)":
     st.divider()
 
     # 4. 하루 마무리
-    # [수정] 목표 시간 input의 value를 session_state에서 가져와서 변경 시 session_state에 저장
     new_target_time = st.number_input("오늘 목표(시간)", min_value=1.0, value=st.session_state.target_time, step=0.5)
     if new_target_time != st.session_state.target_time:
         st.session_state.target_time = new_target_time
@@ -288,7 +305,7 @@ if mode == "Daily View (오늘의 공부)":
     m2.metric("목표 달성률", f"{(total_hours / st.session_state.target_time)*100:.1f}%")
     m3.metric("오늘의 평가", status)
 
-    # [수정] save_to_google_sheets 호출 시 tasks, target_time, d_day_date 데이터 모두 전달
+    # [수정] save_to_google_sheets 호출 시 favorite_tasks 데이터 추가
     if st.button("💾 구글 시트에 기록 저장하기", type="primary", use_container_width=True):
         if save_to_google_sheets(
             today, 
@@ -297,9 +314,10 @@ if mode == "Daily View (오늘의 공부)":
             st.session_state.wakeup_checked, 
             st.session_state.tasks,
             st.session_state.target_time, 
-            st.session_state.d_day_date 
+            st.session_state.d_day_date,
+            st.session_state.favorite_tasks # <--- 즐겨찾기 목록 전달
         ):
-            st.success("✅ 모든 기록(타임테이블, 세팅값)이 영구 저장되었습니다!")
+            st.success("✅ 모든 기록(타임테이블, 세팅값, 즐겨찾기)이 영구 저장되었습니다!")
         else: st.error("저장 실패.")
 
 # ---------------------------------------------------------
@@ -316,7 +334,7 @@ else:
             if records:
                 df = pd.DataFrame(records)
                 
-                columns_to_display = [col for col in df.columns if col not in ['Tasks_JSON', 'Target_Time', 'DDay_Date']]
+                columns_to_display = [col for col in df.columns if col not in ['Tasks_JSON', 'Target_Time', 'DDay_Date', 'Favorites_JSON']]
                 
                 st.dataframe(df[columns_to_display], use_container_width=True)
                 
