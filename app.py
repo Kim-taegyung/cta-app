@@ -9,6 +9,17 @@ from oauth2client.service_account import ServiceAccountCredentials
 # --- 1. 앱 기본 설정 ---
 st.set_page_config(page_title="CTA 합격 메이커", page_icon="📝", layout="wide")
 
+# [추가] 고정된 디폴트 루틴 정의 헬퍼 함수
+def get_default_tasks():
+    """새로운 날에 자동으로 로드될 고정 루틴을 정의합니다."""
+    return [
+        {"plan_time": "08:00", "task": "아침 백지 복습", "accumulated": 0, "last_start": None, "is_running": False},
+        {"plan_time": "13:00", "task": "점심 식사 및 신체 유지 (운동)", "accumulated": 0, "last_start": None, "is_running": False},
+        {"plan_time": "19:00", "task": "저녁 식사 및 익일 식사 준비", "accumulated": 0, "last_start": None, "is_running": False},
+        {"plan_time": "21:00", "task": "저녁 백지 복습/정리", "accumulated": 0, "last_start": None, "is_running": False},
+    ]
+
+
 # --- 2. 헬퍼 함수 ---
 def get_gspread_client():
     """Google Sheet 클라이언트 객체를 반환합니다."""
@@ -20,7 +31,6 @@ def get_gspread_client():
     client = gspread.authorize(creds)
     return client
 
-# [수정] daily_reflection 인자를 추가
 def save_to_google_sheets(date, total_seconds, status, wakeup_success, tasks, target_time, d_day_date, favorite_tasks, daily_reflection):
     try:
         client = get_gspread_client()
@@ -30,7 +40,6 @@ def save_to_google_sheets(date, total_seconds, status, wakeup_success, tasks, ta
         tasks_json = json.dumps(tasks)
         favorites_json = json.dumps(favorite_tasks) 
         
-        # [수정] row에 daily_reflection 추가
         row = [
             str(date), 
             round(total_seconds/3600, 2), 
@@ -40,7 +49,7 @@ def save_to_google_sheets(date, total_seconds, status, wakeup_success, tasks, ta
             target_time, 
             str(d_day_date),
             favorites_json,
-            daily_reflection # <--- 저장
+            daily_reflection
         ]
         sheet.append_row(row)
         return True
@@ -48,10 +57,10 @@ def save_to_google_sheets(date, total_seconds, status, wakeup_success, tasks, ta
         st.error(f"저장 실패: {e}")
         return False
 
-# [수정] load_persistent_data 함수: daily_reflection 로드 로직 추가
+# [수정] load_persistent_data 함수: tasks 로드 로직 수정
 def load_persistent_data():
     client = get_gspread_client()
-    if client is None: return [], 10.0, datetime.date(2026, 5, 1), [], ""
+    if client is None: return get_default_tasks(), 10.0, datetime.date(2026, 5, 1), [], ""
 
     try:
         sheet = client.open("CTA_Study_Data").sheet1 
@@ -60,23 +69,37 @@ def load_persistent_data():
         default_d_day = datetime.date(2026, 5, 1)
         default_favorites = [
             {"plan_time": "08:00", "task": "전일 복습 (백지)", "key": "08:00_전일 복습 (백지)"},
-            {"plan_time": "21:00", "task": "백지 복습", "key": "21:00_백지 복습습"}
+            {"plan_time": "21:00", "task": "세법학 암기", "key": "21:00_세법학 암기"}
         ]
         
+        # 기본값 설정
+        tasks = get_default_tasks() # 기본적으로 고정 루틴을 세팅
+        is_today_loaded = False
+        target_time = 10.0
+        d_day_date = default_d_day
+        favorites = default_favorites
+        daily_reflection = ""
+
         if records:
             df = pd.DataFrame(records)
             last_record = df.iloc[-1]
             today_date_str = datetime.date.today().strftime('%Y-%m-%d')
             
-            # 1. Tasks 로드
-            tasks = []
-            if last_record.get('날짜') == today_date_str and last_record.get('Tasks_JSON'):
-                 tasks = json.loads(last_record['Tasks_JSON'])
-                 for task in tasks:
-                    task['is_running'] = False 
-                    task['last_start'] = None
+            # 오늘 기록이 있는지 확인
+            if last_record.get('날짜') == today_date_str:
+                is_today_loaded = True
+                
+                # 1. Tasks 로드 (오늘 기록이 있으면, 고정 루틴 대신 저장된 Tasks 로드)
+                if last_record.get('Tasks_JSON'):
+                     tasks = json.loads(last_record['Tasks_JSON'])
+                     for task in tasks:
+                        task['is_running'] = False 
+                        task['last_start'] = None
+                # 오늘 기록이 있지만 Tasks_JSON이 빈 값이면, tasks는 빈 리스트가 됨 (사용자가 수동으로 모두 지우고 저장했을 경우를 존중)
+                else:
+                    tasks = [] 
             
-            # 2. Settings 로드
+            # 2. Settings 로드 (Target Time, D-Day)
             target_time_raw = last_record.get('Target_Time', 10.0) 
             try:
                 target_time = float(target_time_raw)
@@ -92,26 +115,23 @@ def load_persistent_data():
                     d_day_date = default_d_day
 
             # 3. Favorites 로드
-            favorites = default_favorites
             if last_record.get('Favorites_JSON'):
                 try:
                     favorites = json.loads(last_record['Favorites_JSON'])
                 except:
                     pass
             
-            # [추가] 4. Reflection 로드 (오늘 날짜 기록이 있다면)
-            daily_reflection = ""
-            if last_record.get('날짜') == today_date_str:
+            # 4. Reflection 로드 (오늘 날짜 기록이 있다면)
+            if is_today_loaded:
                 daily_reflection = last_record.get('Daily_Reflection', "")
 
 
-            return tasks, target_time, d_day_date, favorites, daily_reflection
-            
-        return [], 10.0, default_d_day, default_favorites, ""
+        return tasks, target_time, d_day_date, favorites, daily_reflection
 
     except Exception as e:
         # st.warning(f"데이터 로드 중 오류: {e}") 
-        return [], 10.0, datetime.date(2026, 5, 1), default_favorites, ""
+        # 로드 실패 시에도 고정 루틴 포함 기본값 반환
+        return get_default_tasks(), 10.0, datetime.date(2026, 5, 1), default_favorites, ""
 
 def format_time(seconds):
     m, s = divmod(seconds, 60)
@@ -136,13 +156,12 @@ if 'd_day_date' not in st.session_state:
     st.session_state.d_day_date = initial_d_day_date
 if 'favorite_tasks' not in st.session_state:
     st.session_state.favorite_tasks = initial_favorites
-# [추가] 일기 세션 초기화
 if 'daily_reflection' not in st.session_state:
     st.session_state.daily_reflection = initial_reflection
 
 
 if 'wakeup_checked' not in st.session_state:
-    if initial_reflection and "7시 기상 성공" in initial_reflection: # 간단하게 과거 기록에서 불러오는 임시 로직
+    if initial_reflection and "7시 기상 성공" in initial_reflection:
          st.session_state.wakeup_checked = True 
     else:
         st.session_state.wakeup_checked = False
@@ -311,7 +330,6 @@ if mode == "Daily View (오늘의 공부)":
     m2.metric("목표 달성률", f"{(total_hours / st.session_state.target_time)*100:.1f}%")
     m3.metric("오늘의 평가", status)
     
-    # [추가] 일일 학습 일기 입력
     st.markdown("##### 📝 오늘의 성과 정리 (백지 복습 결과 포함)")
     new_reflection = st.text_area(
         "오늘의 학습 성과와 느낀 점을 자유롭게 기록해 주세요. (가장 효과적인 백지 복습 내용이나, 집중이 잘 안된 이유 등)",
@@ -323,7 +341,6 @@ if mode == "Daily View (오늘의 공부)":
         st.session_state.daily_reflection = new_reflection
 
 
-    # [수정] save_to_google_sheets 호출 시 daily_reflection 데이터 전달
     if st.button("💾 구글 시트에 기록 저장하기", type="primary", use_container_width=True):
         if save_to_google_sheets(
             today, 
@@ -334,7 +351,7 @@ if mode == "Daily View (오늘의 공부)":
             st.session_state.target_time, 
             st.session_state.d_day_date,
             st.session_state.favorite_tasks,
-            st.session_state.daily_reflection # <--- 일기 저장
+            st.session_state.daily_reflection
         ):
             st.success("✅ 모든 기록(일기 포함)이 영구 저장되었습니다!")
         else: st.error("저장 실패.")
@@ -363,4 +380,3 @@ else:
             else: st.info("아직 저장된 기록이 없습니다.")
         else: st.warning("구글 시트 연동 설정(Secrets)이 필요합니다.")
     except Exception as e: st.warning(f"데이터 로드 중 오류: {e}")
-
