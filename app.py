@@ -6,6 +6,10 @@ import gspread
 import json
 import calendar
 from oauth2client.service_account import ServiceAccountCredentials
+try:
+    from streamlit_autorefresh import st_autorefresh
+except ImportError:
+    def st_autorefresh(interval, key): pass
 
 # ---------------------------------------------------------
 # [기능 추가] 타이머 실시간 작동을 위한 자동 새로고침
@@ -24,6 +28,10 @@ NON_STUDY_TASKS = [
     "점심 식사 및 신체 유지 (운동)", 
     "저녁 식사 및 익일 식사 준비"
 ]
+
+# [신규] 멀티 프로젝트 카테고리 정의
+PROJECT_CATEGORIES = ["CTA 공부", "업무/사업", "건강/운동", "기타/생활"]
+CATEGORY_COLORS = {"CTA 공부": "blue", "업무/사업": "orange", "건강/운동": "green", "기타/생활": "gray"}
 
 # --- 2. 헬퍼 함수 ---
 @st.cache_resource(ttl=3600)
@@ -139,7 +147,35 @@ if 'selected_date' not in st.session_state: st.session_state.selected_date = dat
 if 'cal_year' not in st.session_state: st.session_state.cal_year = datetime.date.today().year
 if 'cal_month' not in st.session_state: st.session_state.cal_month = datetime.date.today().month
 
+
 # --- 4. 사이드바 (네비게이션 및 설정) ---
+
+# [신규] Inbox(할일 보관함) 모달 팝업
+@st.dialog("📥 Inbox (생각 보관함)")
+def show_inbox_modal():
+    st.write("떠오르는 아이디어나 나중에 할 일을 기록해두세요.")
+    
+    with st.form("inbox_form", clear_on_submit=True):
+        c1, c2 = st.columns([1, 2])
+        with c1: 
+            cat = st.selectbox("카테고리", PROJECT_CATEGORIES)
+            priority = st.selectbox("우선순위", ["높음", "보통", "낮음"], index=1)
+        with c2:
+            task_name = st.text_input("할 일 내용", placeholder="예: 세법 개정안 확인하기")
+            memo = st.text_area("메모 (선택)", height=80, placeholder="구체적인 내용이나 링크 등")
+        
+        if st.form_submit_button("보관함에 저장"):
+            # 임시 세션 저장 (추후 DB 연결 시 이 부분 수정)
+            new_item = {
+                "category": cat,
+                "task": task_name,
+                "priority": priority,
+                "memo": memo,
+                "created_at": str(datetime.datetime.now())
+            }
+            st.session_state.inbox_items.append(new_item)
+            st.toast(f"✅ Inbox에 저장됨: {task_name}")
+            st.rerun()
 
 # [기능] 저장 로직 분리 (재사용을 위해 함수화)
 def perform_save(target_mode=None):
@@ -201,16 +237,24 @@ def confirm_navigation_modal(target_mode):
 
 # [사이드바 UI 구성]
 with st.sidebar:
-    st.header("🗂️ 메뉴")
+    st.title("🗂️ 메뉴")
     
-    # 네비게이션 처리 함수
-    def try_navigate(target_mode):
-        # 플래너 화면에서 다른 곳으로 갈 때만 확인
-        if st.session_state.view_mode == "Daily View (플래너)" and st.session_state.view_mode != target_mode:
-            confirm_navigation_modal(target_mode)
+    # [1] 네비게이션
+    def try_navigate(target):
+        if st.session_state.view_mode == "Daily View (플래너)" and st.session_state.view_mode != target:
+            confirm_navigation_modal(target)
         else:
-            st.session_state.view_mode = target_mode
+            st.session_state.view_mode = target
             st.rerun()
+
+    if st.button("📅 Monthly View", use_container_width=True): try_navigate("Monthly View (캘린더)")
+    if st.button("📝 Daily View", use_container_width=True): try_navigate("Daily View (플래너)")
+    if st.button("📊 Dashboard", use_container_width=True): try_navigate("Dashboard (대시보드)")
+    
+    # [신규] Inbox 버튼 (메뉴 하단 배치)
+    st.markdown("---")
+    if st.button("📥 Inbox (할일 보관함)", use_container_width=True):
+        show_inbox_modal()
 
     # 메뉴 버튼
     if st.button("📅 Monthly View (캘린더)", use_container_width=True):
@@ -262,6 +306,38 @@ with st.sidebar:
                     idx = fav_list.index(del_target)
                     del st.session_state.favorite_tasks[idx]
                     st.rerun()
+
+# [신규] 사용자 설정 (텔레그램 ID)
+    st.markdown("---")
+    with st.expander("⚙️ 사용자 설정", expanded=True):
+        st.session_state.telegram_id = st.text_input(
+            "텔레그램 ID", 
+            value=st.session_state.telegram_id, 
+            placeholder="숫자 ID 입력",
+            help="알림을 받을 Telegram User ID를 입력하세요."
+        )
+        if st.button("ID 저장"):
+            st.toast("텔레그램 ID가 설정되었습니다.")
+
+    # [신규] 즐겨찾기 관리 (Daily View일 때만 표시, 카테고리 추가)
+    if st.session_state.view_mode == "Daily View (플래너)":
+        st.markdown("---")
+        st.subheader("⭐️ 즐겨찾기 루틴")
+        with st.form("fav_form", clear_on_submit=True):
+            f_cat = st.selectbox("카테고리", PROJECT_CATEGORIES)
+            f_time = st.time_input("시간", value=datetime.time(9,0))
+            f_task = st.text_input("루틴 내용")
+            if st.form_submit_button("루틴 생성"):
+                if 'favorite_tasks' not in st.session_state: st.session_state.favorite_tasks = []
+                st.session_state.favorite_tasks.append({
+                    "category": f_cat,
+                    "plan_time": f_time.strftime("%H:%M"), 
+                    "task": f_task
+                })
+                st.session_state.favorite_tasks.sort(key=lambda x: x['plan_time'])
+                st.rerun()
+
+
 # --- 5. 메인 UI 레이아웃 설정 (3분할: 사이드바 | 메인 | 채팅) ---
 
 # 메인 화면과 채팅창의 비율을 2.3 : 1 정도로 분할 (취향에 따라 [3, 1] 등으로 조정 가능)
@@ -370,24 +446,25 @@ with main_col:
         
         # --- 수동 할 일 추가 ---
         with st.container():
-            st.caption("➕ 수동으로 할 일 추가하기")
-            try:
-                c1, c2, c3 = st.columns([1, 3, 1], vertical_alignment="bottom")
-            except TypeError:
-                c1, c2, c3 = st.columns([1, 3, 1])
-                
-            with c1: input_time = st.time_input("시작 시간", value=datetime.time(9,0))
-            with c2: input_task = st.text_input("내용 입력", placeholder="과목명 등")
-            with c3: 
+            st.caption("➕ 할 일 등록 (카테고리 분류)")
+            # 레이아웃: 시간 | 카테고리 | 내용 | 버튼
+            c1, c2, c3, c4 = st.columns([1, 1.5, 3, 1], vertical_alignment="bottom")
+        
+            with c1: input_time = st.time_input("시작", value=datetime.time(9,0))
+            with c2: input_cat = st.selectbox("프로젝트", PROJECT_CATEGORIES, label_visibility="visible") # 레이블 보이게 수정
+            with c3: input_task = st.text_input("내용", placeholder="업무/학습 내용")
+            with c4:
                 if st.button("등록", use_container_width=True):
-                    t_time_str = input_time.strftime("%H:%M")
-                    # [수정 1] 중복 시간 체크 로직
-                    existing_times = [t['plan_time'] for t in st.session_state.tasks]
-                    if t_time_str in existing_times:
-                         st.warning(f"⚠️ {t_time_str}에 이미 일정이 있습니다.")
-                    else:
-                        st.session_state.tasks.append({"plan_time": t_time_str, "task": input_task, "accumulated": 0, "last_start": None, "is_running": False})
-                        st.rerun()
+                    # 데이터 구조에 'category' 추가
+                    st.session_state.tasks.append({
+                        "plan_time": input_time.strftime("%H:%M"),
+                        "category": input_cat,
+                        "task": input_task,
+                        "accumulated": 0,
+                        "last_start": None,
+                        "is_running": False
+                    })
+                    st.rerun()
 
         st.markdown("---")
         
@@ -563,3 +640,4 @@ with chat_col:
         
         st.session_state.messages.append({"role": "assistant", "content": response})
         st.rerun()
+
