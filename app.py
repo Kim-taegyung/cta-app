@@ -193,67 +193,74 @@ with st.sidebar:
                     del st.session_state.favorite_tasks[idx]
                     st.rerun()
 
-# --- 5. 메인 UI ---
+# --- 5. 메인 UI 레이아웃 설정 (3분할: 사이드바 | 메인 | 채팅) ---
 
-# [VIEW 1] Monthly View (캘린더)
-if st.session_state.view_mode == "Monthly View (캘린더)":
-    st.title("📅 월간 스케줄")
-    
-    col_prev, col_curr, col_next = st.columns([1, 5, 1])
-    with col_prev:
-        if st.button("◀"):
-            if st.session_state.cal_month == 1:
-                st.session_state.cal_month = 12
-                st.session_state.cal_year -= 1
-            else: st.session_state.cal_month -= 1
-            st.rerun()
-    with col_curr:
-        st.markdown(f"<h3 style='text-align: center;'>{st.session_state.cal_year}년 {st.session_state.cal_month}월</h3>", unsafe_allow_html=True)
-    with col_next:
-        if st.button("▶"):
-            if st.session_state.cal_month == 12:
-                st.session_state.cal_month = 1
-                st.session_state.cal_year += 1
-            else: st.session_state.cal_month += 1
-            st.rerun()
+# 메인 화면과 채팅창의 비율을 2.3 : 1 정도로 분할 (취향에 따라 [3, 1] 등으로 조정 가능)
+main_col, chat_col = st.columns([2.3, 1])
 
-    status_map = {}
-    try:
-        client = get_gspread_client()
-        if client:
-            sheet = client.open("CTA_Study_Data").sheet1
-            records = sheet.get_all_records()
-            if records:
-                df = pd.DataFrame(records)
-                df_latest = df.groupby('날짜').last().reset_index()
-                for _, row in df_latest.iterrows():
-                    status_map[row['날짜']] = row['상태']
-    except: pass
+# ---------------------------------------------------------
+# [LEFT COLUMN] 메인 컨텐츠 영역 (기존 플래너/캘린더 기능)
+# ---------------------------------------------------------
+with main_col:
+    
+    # [VIEW 1] Monthly View (캘린더)
+    if st.session_state.view_mode == "Monthly View (캘린더)":
+        st.title("📅 월간 스케줄")
+        
+        col_prev, col_curr, col_next = st.columns([1, 5, 1])
+        with col_prev:
+            if st.button("◀"):
+                if st.session_state.cal_month == 1:
+                    st.session_state.cal_month = 12
+                    st.session_state.cal_year -= 1
+                else: st.session_state.cal_month -= 1
+                st.rerun()
+        with col_curr:
+            st.markdown(f"<h3 style='text-align: center;'>{st.session_state.cal_year}년 {st.session_state.cal_month}월</h3>", unsafe_allow_html=True)
+        with col_next:
+            if st.button("▶"):
+                if st.session_state.cal_month == 12:
+                    st.session_state.cal_month = 1
+                    st.session_state.cal_year += 1
+                else: st.session_state.cal_month += 1
+                st.rerun()
 
-    cal = calendar.monthcalendar(st.session_state.cal_year, st.session_state.cal_month)
-    week_days = ['월', '화', '수', '목', '금', '토', '일']
-    
-    cols = st.columns(7)
-    for i, day in enumerate(week_days): cols[i].markdown(f"**{day}**", unsafe_allow_html=True)
-    
-    for week in cal:
+        status_map = {}
+        try:
+            client = get_gspread_client()
+            if client:
+                sheet = client.open("CTA_Study_Data").sheet1
+                records = sheet.get_all_records()
+                if records:
+                    df = pd.DataFrame(records)
+                    df_latest = df.groupby('날짜').last().reset_index()
+                    for _, row in df_latest.iterrows():
+                        status_map[row['날짜']] = row['상태']
+        except: pass
+
+        cal = calendar.monthcalendar(st.session_state.cal_year, st.session_state.cal_month)
+        week_days = ['월', '화', '수', '목', '금', '토', '일']
+        
         cols = st.columns(7)
-        for i, day in enumerate(week):
-            if day == 0: cols[i].write("")
-            else:
-                curr_date = datetime.date(st.session_state.cal_year, st.session_state.cal_month, day)
-                d_str = curr_date.strftime('%Y-%m-%d')
-                
-                status_icon = "⚪"
-                if d_str in status_map:
-                    if "Good" in status_map[d_str]: status_icon = "🟢"
-                    elif "Normal" in status_map[d_str]: status_icon = "🟡"
-                    elif "Bad" in status_map[d_str]: status_icon = "🔴"
-                
-                # [수정] TODAY 글자 삭제 (날짜와 아이콘만 표시)
-                label = f"{day} {status_icon}"
-                if cols[i].button(label, key=f"cal_{day}", use_container_width=True):
-                    go_to_daily(curr_date)
+        for i, day in enumerate(week_days): cols[i].markdown(f"**{day}**", unsafe_allow_html=True)
+        
+        for week in cal:
+            cols = st.columns(7)
+            for i, day in enumerate(week):
+                if day == 0: cols[i].write("")
+                else:
+                    curr_date = datetime.date(st.session_state.cal_year, st.session_state.cal_month, day)
+                    d_str = curr_date.strftime('%Y-%m-%d')
+                    
+                    status_icon = "⚪"
+                    if d_str in status_map:
+                        if "Good" in status_map[d_str]: status_icon = "🟢"
+                        elif "Normal" in status_map[d_str]: status_icon = "🟡"
+                        elif "Bad" in status_map[d_str]: status_icon = "🔴"
+                    
+                    label = f"{day} {status_icon}"
+                    if cols[i].button(label, key=f"cal_{day}", use_container_width=True):
+                        go_to_daily(curr_date)
 
 # [VIEW 2] Daily View (플래너)
 elif st.session_state.view_mode == "Daily View (플래너)":
@@ -399,3 +406,33 @@ elif st.session_state.view_mode == "Dashboard (대시보드)":
     except:
         st.error("데이터 로드 중 오류가 발생했습니다.")
 
+# [RIGHT COLUMN] 우측 채팅 화면 (새로 추가됨)
+# ---------------------------------------------------------
+with chat_col:
+    st.header("💬 AI Chat")
+    st.caption("공부 중 궁금한 점을 물어보세요.")
+    
+    # 채팅 기록 초기화
+    if "messages" not in st.session_state:
+        st.session_state.messages = []
+
+    # 채팅 기록 표시 (컨테이너를 사용하여 높이 제한 가능)
+    with st.container(height=600, border=True):
+        for message in st.session_state.messages:
+            with st.chat_message(message["role"]):
+                st.markdown(message["content"])
+
+    # 채팅 입력창
+    if prompt := st.chat_input("질문을 입력하세요..."):
+        # 사용자 메시지 표시
+        st.session_state.messages.append({"role": "user", "content": prompt})
+        with st.chat_message("user"):
+            st.markdown(prompt)
+
+        # AI 응답 (현재는 Echo 기능, 추후 AI 연결 가능)
+        with st.chat_message("assistant"):
+            response = f"입력하신 내용: {prompt} \n(AI 연결 시 답변이 표시됩니다)"
+            st.markdown(response)
+        
+        st.session_state.messages.append({"role": "assistant", "content": response})
+        st.rerun()
