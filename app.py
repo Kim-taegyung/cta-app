@@ -256,18 +256,6 @@ with st.sidebar:
     if st.button("📥 Inbox (할일 보관함)", use_container_width=True):
         show_inbox_modal()
 
-    # 메뉴 버튼
-    if st.button("📅 Monthly View (캘린더)", use_container_width=True):
-        try_navigate("Monthly View (캘린더)")
-        
-    if st.button("📝 Daily View (플래너)", use_container_width=True):
-        try_navigate("Daily View (플래너)")
-        
-    if st.button("📊 Dashboard (대시보드)", use_container_width=True):
-        try_navigate("Dashboard (대시보드)")
-
-    st.markdown("---")
-    
     # [기존 기능 유지] 즐겨찾기 관리 (Daily View일 때만 표시)
     if st.session_state.view_mode == "Daily View (플래너)":
         st.subheader("⚙️ 설정")
@@ -640,4 +628,5 @@ with chat_col:
         
         st.session_state.messages.append({"role": "assistant", "content": response})
         st.rerun()
+
 
