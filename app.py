@@ -32,7 +32,7 @@ if st.session_state.last_session_date != current_date_str:
     
     # 강제 새로고침하여 load_persistent_data()를 다시 실행시킴
     st.rerun()
-    
+  
 # --- 1. 앱 기본 설정 ---
 st.set_page_config(page_title="CTA 합격 메이커", page_icon="📝", layout="wide")
 
@@ -367,4 +367,5 @@ else:
             else: st.info("아직 저장된 기록이 없습니다.")
         else: st.warning("구글 시트 연동 설정(Secrets)이 필요합니다.")
     except Exception as e: st.warning(f"데이터 로드 중 오류: {e}")
+
 
