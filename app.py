@@ -3,31 +3,91 @@ import pandas as pd
 import datetime
 import time
 import gspread
+import json 
 from oauth2client.service_account import ServiceAccountCredentials
-
-# --- 0. 설정: 상수 (알림 기능 삭제로 인해 토큰/ID 필요 없음) ---
-# SENDER_EMAIL 등 관련 설정 삭제
 
 # --- 1. 앱 기본 설정 ---
 st.set_page_config(page_title="CTA 합격 메이커", page_icon="📝", layout="wide")
 
-# (자동 새로고침 기능도 알림 기능이 없으므로 삭제되었습니다.)
-
 # --- 2. 헬퍼 함수 ---
-def save_to_google_sheets(date, total_seconds, status, wakeup_success):
+def get_gspread_client():
+    """Google Sheet 클라이언트 객체를 반환합니다."""
+    if "gcp_service_account" not in st.secrets:
+        return None
+    scope = ['https://spreadsheets.google.com/feeds', 'https://www.googleapis.com/auth/drive']
+    creds_dict = dict(st.secrets["gcp_service_account"])
+    creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
+    client = gspread.authorize(creds)
+    return client
+
+def save_to_google_sheets(date, total_seconds, status, wakeup_success, tasks, target_time, d_day_date):
     try:
-        if "gcp_service_account" not in st.secrets: return True 
-        scope = ['https://spreadsheets.google.com/feeds', 'https://www.googleapis.com/auth/drive']
-        creds_dict = dict(st.secrets["gcp_service_account"])
-        creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
-        client = gspread.authorize(creds)
+        client = get_gspread_client()
+        if client is None: return True 
         sheet = client.open("CTA_Study_Data").sheet1 
-        row = [str(date), round(total_seconds/3600, 2), status, "성공" if wakeup_success else "실패"]
+        
+        tasks_json = json.dumps(tasks)
+        
+        # [수정] 세팅값을 row에 추가하여 저장
+        row = [
+            str(date), 
+            round(total_seconds/3600, 2), 
+            status, 
+            "성공" if wakeup_success else "실패", 
+            tasks_json,
+            target_time, # <--- 저장
+            str(d_day_date) # <--- 저장
+        ]
         sheet.append_row(row)
         return True
     except Exception as e:
         st.error(f"저장 실패: {e}")
         return False
+
+# [추가/수정] 모든 지속성 데이터를 로드하는 통합 함수
+def load_persistent_data():
+    client = get_gspread_client()
+    if client is None: return [], 10.0, datetime.date(2026, 5, 1)
+
+    try:
+        sheet = client.open("CTA_Study_Data").sheet1 
+        records = sheet.get_all_records()
+        
+        # 기본값 설정
+        default_d_day = datetime.date(2026, 5, 1)
+        
+        if records:
+            df = pd.DataFrame(records)
+            last_record = df.iloc[-1] # 가장 최근 저장된 행에서 세팅값을 로드
+            today_date_str = datetime.date.today().strftime('%Y-%m-%d')
+            
+            # 1. Tasks 로드 (오늘 날짜의 기록이 있다면 로드)
+            tasks = []
+            if last_record.get('날짜') == today_date_str and last_record.get('Tasks_JSON'):
+                 tasks = json.loads(last_record['Tasks_JSON'])
+                 # 앱이 재시작되면 타이머 상태는 멈춤으로 초기화
+                 for task in tasks:
+                    task['is_running'] = False 
+                    task['last_start'] = None
+            
+            # 2. Settings 로드 (가장 최근 기록에서 로드)
+            target_time = last_record.get('Target_Time', 10.0)
+            
+            d_day_date_str = last_record.get('DDay_Date')
+            d_day_date = default_d_day
+            if d_day_date_str:
+                try:
+                    d_day_date = datetime.datetime.strptime(str(d_day_date_str), '%Y-%m-%d').date()
+                except ValueError:
+                    d_day_date = default_d_day
+            
+            return tasks, target_time, d_day_date
+            
+        return [], 10.0, default_d_day
+
+    except Exception as e:
+        # st.warning(f"데이터 로드 중 오류: {e}") 
+        return [], 10.0, datetime.date(2026, 5, 1)
 
 def format_time(seconds):
     m, s = divmod(seconds, 60)
@@ -41,29 +101,33 @@ def get_status_color(achieved, target):
     elif ratio >= 50: return "🟡 Normal"
     else: return "🔴 Bad"
 
-# --- 3. 세션 및 데이터 초기화 ---
+# --- 3. 세션 및 데이터 초기화 (앱 시작 시 데이터 로드) ---
+initial_tasks, initial_target_time, initial_d_day_date = load_persistent_data()
+
 if 'tasks' not in st.session_state:
-    st.session_state.tasks = [] 
+    st.session_state.tasks = initial_tasks 
+
+# [수정] 세팅값 로드
 if 'target_time' not in st.session_state:
-    st.session_state.target_time = 10.0
+    st.session_state.target_time = initial_target_time
+        
+if 'd_day_date' not in st.session_state:
+    st.session_state.d_day_date = initial_d_day_date
+# ... (나머지 세션 상태 초기화는 동일) ...
 if 'wakeup_checked' not in st.session_state:
     st.session_state.wakeup_checked = False
-if 'd_day_date' not in st.session_state:
-    st.session_state.d_day_date = datetime.date(2026, 5, 1)
-
-# 알림 관련 변수 삭제 (alert_minutes_before, user_email)
-
 if 'favorite_tasks' not in st.session_state:
     st.session_state.favorite_tasks = [
         {"plan_time": "08:00", "task": "전일 복습 (백지)", "key": "08:00_전일 복습 (백지)"},
         {"plan_time": "21:00", "task": "세법학 암기", "key": "21:00_세법학 암기"}
     ]
-
+    
 # --- 4. 사이드바 (설정 & 즐겨찾기 관리) ---
 with st.sidebar:
     st.header("⚙️ 설정")
     
     st.subheader("시험 목표 설정")
+    # [수정] date_input과 number_input의 value를 session_state에서 가져와서 변경 시 session_state에 저장
     new_d_day = st.date_input("시험 예정일 (D-Day)", value=st.session_state.d_day_date)
     if new_d_day != st.session_state.d_day_date:
         st.session_state.d_day_date = new_d_day
@@ -71,10 +135,8 @@ with st.sidebar:
 
     st.markdown("---") 
     
-    # [알림 설정 섹션 삭제됨]
-
     st.subheader("⭐️ 즐겨찾는 루틴 관리")
-    
+    # ... (즐겨찾기 폼/삭제 코드는 동일) ...
     with st.form("favorite_form", clear_on_submit=True):
         fav_time = st.time_input("루틴 시간", value=datetime.time(9, 0), key="fav_time")
         fav_task = st.text_input("루틴 내용", placeholder="예: 백지 복습", key="fav_task")
@@ -115,8 +177,6 @@ d_day_str = f"D-{d_day_delta}" if d_day_delta > 0 else (f"D+{abs(d_day_delta)}" 
 st.title(f"📝 CTA 합격 메이커 ({d_day_str})")
 mode = st.radio("모드 선택", ["Daily View (오늘의 공부)", "Monthly View (대시보드)"], horizontal=True)
 
-# [알림 체크 로직 전체 삭제됨]
-
 # ---------------------------------------------------------
 # [모드 1] 데일리 뷰
 # ---------------------------------------------------------
@@ -147,7 +207,7 @@ if mode == "Daily View (오늘의 공부)":
                         "accumulated": 0,
                         "last_start": None,
                         "is_running": False
-                    }) # "alert_sent" 필드 삭제
+                    })
                     st.rerun()
                 else: st.warning("이미 오늘의 타임테이블에 있는 할 일입니다.")
     else: st.info("등록된 즐겨찾는 루틴이 없습니다. 설정창에서 추가하세요.")
@@ -169,7 +229,7 @@ if mode == "Daily View (오늘의 공부)":
                     "accumulated": 0,
                     "last_start": None,
                     "is_running": False
-                }) # "alert_sent" 필드 삭제
+                })
                 st.rerun()
 
     st.markdown("---")
@@ -215,7 +275,11 @@ if mode == "Daily View (오늘의 공부)":
     st.divider()
 
     # 4. 하루 마무리
-    st.session_state.target_time = st.number_input("오늘 목표(시간)", min_value=1.0, value=st.session_state.target_time, step=0.5)
+    # [수정] 목표 시간 input의 value를 session_state에서 가져와서 변경 시 session_state에 저장
+    new_target_time = st.number_input("오늘 목표(시간)", min_value=1.0, value=st.session_state.target_time, step=0.5)
+    if new_target_time != st.session_state.target_time:
+        st.session_state.target_time = new_target_time
+    
     total_hours = total_seconds / 3600
     status = get_status_color(total_hours, st.session_state.target_time)
 
@@ -224,9 +288,18 @@ if mode == "Daily View (오늘의 공부)":
     m2.metric("목표 달성률", f"{(total_hours / st.session_state.target_time)*100:.1f}%")
     m3.metric("오늘의 평가", status)
 
+    # [수정] save_to_google_sheets 호출 시 tasks, target_time, d_day_date 데이터 모두 전달
     if st.button("💾 구글 시트에 기록 저장하기", type="primary", use_container_width=True):
-        if save_to_google_sheets(today, total_seconds, status, st.session_state.wakeup_checked):
-            st.success("✅ 저장되었습니다!")
+        if save_to_google_sheets(
+            today, 
+            total_seconds, 
+            status, 
+            st.session_state.wakeup_checked, 
+            st.session_state.tasks,
+            st.session_state.target_time, # <--- 세팅값 저장
+            st.session_state.d_day_date # <--- 세팅값 저장
+        ):
+            st.success("✅ 모든 기록(타임테이블, 세팅값)이 영구 저장되었습니다!")
         else: st.error("저장 실패.")
 
 # ---------------------------------------------------------
@@ -235,19 +308,22 @@ if mode == "Daily View (오늘의 공부)":
 else:
     st.subheader("🗓️ 월간 기록 대시보드")
     try:
-        if "gcp_service_account" in st.secrets:
-            scope = ['https://spreadsheets.google.com/feeds', 'https://www.googleapis.com/auth/drive']
-            creds_dict = dict(st.secrets["gcp_service_account"])
-            creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
-            client = gspread.authorize(creds)
+        client = get_gspread_client()
+        if client and "gcp_service_account" in st.secrets:
             sheet = client.open("CTA_Study_Data").sheet1
+            
             records = sheet.get_all_records()
             if records:
                 df = pd.DataFrame(records)
-                st.dataframe(df, use_container_width=True)
+                
+                # 'Tasks_JSON', 'Target_Time', 'DDay_Date' 컬럼은 시각화에서 제외
+                columns_to_display = [col for col in df.columns if col not in ['Tasks_JSON', 'Target_Time', 'DDay_Date']]
+                
+                st.dataframe(df[columns_to_display], use_container_width=True)
+                
                 if '기상성공여부' in df.columns:
                     success_count = len(df[df['기상성공여부'] == '성공'])
-                    st.info(f"이번 달 기상 성공 횟수: {success_count}회")
+                    st.info(f"누적 기록: {len(df)}일 | 기상 성공 횟수: {success_count}회")
             else: st.info("아직 저장된 기록이 없습니다.")
         else: st.warning("구글 시트 연동 설정(Secrets)이 필요합니다.")
     except Exception as e: st.warning(f"데이터 로드 중 오류: {e}")
