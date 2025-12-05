@@ -6,6 +6,33 @@ import gspread
 import json 
 from oauth2client.service_account import ServiceAccountCredentials
 
+# =========================================================================
+# [추가된 핵심 수정 코드] 날짜 변경 시 세션 강제 초기화 로직
+# =========================================================================
+
+# 세션 상태가 초기화되었는지 확인하는 플래그
+if 'app_initialized' not in st.session_state:
+    st.session_state.app_initialized = False
+
+# [필수]: 날짜가 바뀌었는지 체크하고, 바뀌었으면 데일리 상태를 리셋
+current_date_str = datetime.date.today().strftime('%Y-%m-%d')
+
+if 'last_session_date' not in st.session_state:
+    st.session_state.last_session_date = current_date_str
+
+if st.session_state.last_session_date != current_date_str:
+    # 🚨 날짜가 바뀌었으므로 데일리 상태 초기화 🚨
+    # Daily_tasks, reflection, and wakeup check must be cleared
+    st.session_state.tasks = [] 
+    st.session_state.wakeup_checked = False
+    st.session_state.daily_reflection = ""
+    
+    # 마지막 로드 날짜를 오늘로 업데이트
+    st.session_state.last_session_date = current_date_str
+    
+    # 강제 새로고침하여 load_persistent_data()를 다시 실행시킴
+    st.rerun()
+    
 # --- 1. 앱 기본 설정 ---
 st.set_page_config(page_title="CTA 합격 메이커", page_icon="📝", layout="wide")
 
@@ -340,3 +367,4 @@ else:
             else: st.info("아직 저장된 기록이 없습니다.")
         else: st.warning("구글 시트 연동 설정(Secrets)이 필요합니다.")
     except Exception as e: st.warning(f"데이터 로드 중 오류: {e}")
+
