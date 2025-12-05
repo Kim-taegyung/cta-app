@@ -28,15 +28,14 @@ def save_to_google_sheets(date, total_seconds, status, wakeup_success, tasks, ta
         
         tasks_json = json.dumps(tasks)
         
-        # [수정] 세팅값을 row에 추가하여 저장
         row = [
             str(date), 
             round(total_seconds/3600, 2), 
             status, 
             "성공" if wakeup_success else "실패", 
             tasks_json,
-            target_time, # <--- 저장
-            str(d_day_date) # <--- 저장
+            target_time, 
+            str(d_day_date) 
         ]
         sheet.append_row(row)
         return True
@@ -44,7 +43,7 @@ def save_to_google_sheets(date, total_seconds, status, wakeup_success, tasks, ta
         st.error(f"저장 실패: {e}")
         return False
 
-# [추가/수정] 모든 지속성 데이터를 로드하는 통합 함수
+# [수정] 모든 지속성 데이터를 로드하는 통합 함수 (숫자형 오류 처리)
 def load_persistent_data():
     client = get_gspread_client()
     if client is None: return [], 10.0, datetime.date(2026, 5, 1)
@@ -53,25 +52,28 @@ def load_persistent_data():
         sheet = client.open("CTA_Study_Data").sheet1 
         records = sheet.get_all_records()
         
-        # 기본값 설정
         default_d_day = datetime.date(2026, 5, 1)
         
         if records:
             df = pd.DataFrame(records)
-            last_record = df.iloc[-1] # 가장 최근 저장된 행에서 세팅값을 로드
+            last_record = df.iloc[-1] 
             today_date_str = datetime.date.today().strftime('%Y-%m-%d')
             
-            # 1. Tasks 로드 (오늘 날짜의 기록이 있다면 로드)
+            # 1. Tasks 로드
             tasks = []
             if last_record.get('날짜') == today_date_str and last_record.get('Tasks_JSON'):
                  tasks = json.loads(last_record['Tasks_JSON'])
-                 # 앱이 재시작되면 타이머 상태는 멈춤으로 초기화
                  for task in tasks:
                     task['is_running'] = False 
                     task['last_start'] = None
             
-            # 2. Settings 로드 (가장 최근 기록에서 로드)
-            target_time = last_record.get('Target_Time', 10.0)
+            # 2. Settings 로드 (오류 방지를 위해 반드시 float/date로 형변환)
+            target_time_raw = last_record.get('Target_Time', 10.0) 
+            try:
+                # Target_Time을 float으로 강제 변환 
+                target_time = float(target_time_raw)
+            except (ValueError, TypeError):
+                target_time = 10.0 # 변환 실패 시 기본값
             
             d_day_date_str = last_record.get('DDay_Date')
             d_day_date = default_d_day
@@ -107,13 +109,12 @@ initial_tasks, initial_target_time, initial_d_day_date = load_persistent_data()
 if 'tasks' not in st.session_state:
     st.session_state.tasks = initial_tasks 
 
-# [수정] 세팅값 로드
 if 'target_time' not in st.session_state:
     st.session_state.target_time = initial_target_time
         
 if 'd_day_date' not in st.session_state:
     st.session_state.d_day_date = initial_d_day_date
-# ... (나머지 세션 상태 초기화는 동일) ...
+
 if 'wakeup_checked' not in st.session_state:
     st.session_state.wakeup_checked = False
 if 'favorite_tasks' not in st.session_state:
@@ -127,7 +128,6 @@ with st.sidebar:
     st.header("⚙️ 설정")
     
     st.subheader("시험 목표 설정")
-    # [수정] date_input과 number_input의 value를 session_state에서 가져와서 변경 시 session_state에 저장
     new_d_day = st.date_input("시험 예정일 (D-Day)", value=st.session_state.d_day_date)
     if new_d_day != st.session_state.d_day_date:
         st.session_state.d_day_date = new_d_day
@@ -136,7 +136,7 @@ with st.sidebar:
     st.markdown("---") 
     
     st.subheader("⭐️ 즐겨찾는 루틴 관리")
-    # ... (즐겨찾기 폼/삭제 코드는 동일) ...
+    
     with st.form("favorite_form", clear_on_submit=True):
         fav_time = st.time_input("루틴 시간", value=datetime.time(9, 0), key="fav_time")
         fav_task = st.text_input("루틴 내용", placeholder="예: 백지 복습", key="fav_task")
@@ -296,8 +296,8 @@ if mode == "Daily View (오늘의 공부)":
             status, 
             st.session_state.wakeup_checked, 
             st.session_state.tasks,
-            st.session_state.target_time, # <--- 세팅값 저장
-            st.session_state.d_day_date # <--- 세팅값 저장
+            st.session_state.target_time, 
+            st.session_state.d_day_date 
         ):
             st.success("✅ 모든 기록(타임테이블, 세팅값)이 영구 저장되었습니다!")
         else: st.error("저장 실패.")
@@ -316,7 +316,6 @@ else:
             if records:
                 df = pd.DataFrame(records)
                 
-                # 'Tasks_JSON', 'Target_Time', 'DDay_Date' 컬럼은 시각화에서 제외
                 columns_to_display = [col for col in df.columns if col not in ['Tasks_JSON', 'Target_Time', 'DDay_Date']]
                 
                 st.dataframe(df[columns_to_display], use_container_width=True)
