@@ -4,27 +4,48 @@ import datetime
 import time
 import gspread
 import json 
+import streamlit.components.v1 as components # <--- 추가
 from oauth2client.service_account import ServiceAccountCredentials
 
 # =========================================================================
-# [수정된 핵심 코드] 날짜 변경 시 데일리 상태 강제 초기화
+# [새로운 핵심 함수] JavaScript 시계 구현
 # =========================================================================
+def display_realtime_clock():
+    """JavaScript를 사용하여 실시간 시계를 매초 업데이트합니다."""
+    components.html("""
+    <script>
+    function updateClock() {
+        const now = new Date();
+        const options = {year: 'numeric', month: '2-digit', day: '2-digit'};
+        const dateString = now.toLocaleDateString('ko-KR', options).replace(/ /g, '').replace(/\.$/, '').replace(/\./g, '-');
+        const timeString = String(now.getHours()).padStart(2, '0') + ":" + 
+                           String(now.getMinutes()).padStart(2, '0') + ":" + 
+                           String(now.getSeconds()).padStart(2, '0');
+        document.getElementById('realtime-clock').innerHTML = dateString + ' | ' + timeString;
+    }
+    setInterval(updateClock, 1000); // 1초마다 업데이트
+    updateClock(); // 초기 호출
+    </script>
+    <div id="realtime-clock" style="font-size: 16px; font-weight: bold; color: #FF4B4B;"></div>
+    """, height=30)
+
+# =========================================================================
+# (기존 날짜 변경 로직은 동일하게 유지됩니다.)
+# =========================================================================
+
 current_date = datetime.date.today().strftime('%Y-%m-%d')
 
 if 'session_initialized_date' not in st.session_state:
     st.session_state.session_initialized_date = current_date
 
-# 만약 저장된 날짜와 오늘 날짜가 다르면, 모든 일일 데이터를 삭제하고 새로 로드합니다.
 if st.session_state.session_initialized_date != current_date:
-    # 🚨 일일 데이터 세션 키들을 '삭제(del)'하여 load_persistent_data()를 강제 실행시킴 🚨
     for key in ['tasks', 'wakeup_checked', 'daily_reflection']:
         if key in st.session_state:
             del st.session_state[key]
             
-    # 마지막 로드 날짜를 오늘로 업데이트 및 강제 새로고침
     st.session_state.session_initialized_date = current_date
     st.rerun()
-  
+
 # --- 1. 앱 기본 설정 ---
 st.set_page_config(page_title="CTA 합격 메이커", page_icon="📝", layout="wide")
 
@@ -36,6 +57,7 @@ NON_STUDY_TASKS = [
 
 # --- 2. 헬퍼 함수 ---
 def get_gspread_client():
+    """Google Sheet 클라이언트 객체를 반환합니다."""
     if "gcp_service_account" not in st.secrets:
         return None
     scope = ['https://spreadsheets.google.com/feeds', 'https://www.googleapis.com/auth/drive']
@@ -45,6 +67,7 @@ def get_gspread_client():
     return client
 
 def get_default_tasks():
+    """새로운 날에 자동으로 로드될 고정 루틴을 정의합니다."""
     return [
         {"plan_time": "08:00", "task": "아침 백지 복습", "accumulated": 0, "last_start": None, "is_running": False},
         {"plan_time": "13:00", "task": "점심 식사 및 신체 유지 (운동)", "accumulated": 0, "last_start": None, "is_running": False},
@@ -177,7 +200,6 @@ with st.sidebar:
 
     st.markdown("---") 
     
-    # [추가] 몰입 사운드 엔진
     st.subheader("🎧 몰입 사운드 (Focus Sound)")
     sound_option = st.selectbox("사운드 선택", ["선택 안 함", "빗소리 (Rain)", "카페 소음 (Cafe)", "알파파 (Alpha Waves)"])
     
@@ -188,7 +210,6 @@ with st.sidebar:
         st.audio("https://cdn.pixabay.com/download/audio/2021/08/09/audio_88447e769f.mp3", format="audio/mp3", loop=True)
         st.caption("☕ 적당한 소음이 집중력을 높입니다.")
     elif sound_option == "알파파 (Alpha Waves)":
-        # 432Hz 딥 포커스 사운드 (샘플)
         st.audio("https://cdn.pixabay.com/download/audio/2022/03/09/audio_c8c8a73467.mp3", format="audio/mp3", loop=True)
         st.caption("🧠 뇌파를 안정시켜 학습 효율을 극대화합니다.")
 
@@ -214,6 +235,7 @@ with st.sidebar:
             if fav_to_delete:
                 keys_to_delete = [opt.split(" - ", 1) for opt in fav_to_delete]
                 keys_to_delete = [f"{k[0]}_{k[1]}" for k in keys_to_delete]
+                
                 st.session_state.favorite_tasks = [f for f in st.session_state.favorite_tasks if f['key'] not in keys_to_delete]
                 st.rerun()
 
@@ -229,7 +251,9 @@ mode = st.radio("모드 선택", ["Daily View (오늘의 공부)", "Monthly View
 # [모드 1] 데일리 뷰
 # ---------------------------------------------------------
 if mode == "Daily View (오늘의 공부)":
+    # [수정] 자바스크립트 시계를 오늘의 날짜 아래에 배치
     st.subheader(f"📅 {today.strftime('%Y-%m-%d')}")
+    display_realtime_clock() 
     
     st.markdown("##### ☀️ 아침 루틴")
     is_wakeup = st.checkbox("7시 기상 성공!", value=st.session_state.wakeup_checked, key="wakeup_chk")
@@ -264,7 +288,7 @@ if mode == "Daily View (오늘의 공부)":
     with col_input1:
         plan_time = st.time_input("시작 시간", value=datetime.time(9, 0), key="manual_time")
     with col_input2:
-        new_task = st.text_input("학습할 과목/내용", placeholder="예: 재무회계 기출풀이", key="manual_task")
+        new_task = st.text_input("학습할 과목/내용", placeholder="예: 재무회계 기출풀이", key="manual_time")
     with col_btn:
         if st.button("추가하기", use_container_width=True, type="primary"):
             if new_task:
@@ -329,7 +353,7 @@ if mode == "Daily View (오늘의 공부)":
     m2.metric("목표 달성률", f"{(total_hours / st.session_state.target_time)*100:.1f}%")
     m3.metric("오늘의 평가", status)
     
-    st.markdown("##### 📝 오늘의 성과 정리 (백지 복습 결과 포함)")
+    st.markdown("##### 📝 오늘의 학습 성과 정리 (백지 복습 결과 포함)")
     new_reflection = st.text_area("오늘의 학습 성과와 느낀 점을 기록해 주세요.", value=st.session_state.daily_reflection, height=150, key="reflection_input")
     if new_reflection != st.session_state.daily_reflection: st.session_state.daily_reflection = new_reflection
 
@@ -359,6 +383,3 @@ else:
             else: st.info("아직 저장된 기록이 없습니다.")
         else: st.warning("구글 시트 연동 설정(Secrets)이 필요합니다.")
     except Exception as e: st.warning(f"데이터 로드 중 오류: {e}")
-
-
-
