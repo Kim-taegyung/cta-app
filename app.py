@@ -4,12 +4,10 @@ import datetime
 import time
 import gspread
 import json 
-import streamlit.components.v1 as components # <--- 추가
+import streamlit.components.v1 as components 
 from oauth2client.service_account import ServiceAccountCredentials
 
-# =========================================================================
-# [새로운 핵심 함수] JavaScript 시계 구현
-# =========================================================================
+# [새 함수] JavaScript 시계
 def display_realtime_clock():
     """JavaScript를 사용하여 실시간 시계를 매초 업데이트합니다."""
     components.html("""
@@ -18,32 +16,22 @@ def display_realtime_clock():
         const now = new Date();
         const options = {year: 'numeric', month: '2-digit', day: '2-digit'};
         const dateString = now.toLocaleDateString('ko-KR', options).replace(/ /g, '').replace(/\.$/, '').replace(/\./g, '-');
-        const timeString = String(now.getHours()).padStart(2, '0') + ":" + 
-                           String(now.getMinutes()).padStart(2, '0') + ":" + 
-                           String(now.getSeconds()).padStart(2, '0');
+        const timeString = String(now.getHours()).padStart(2, 0) + ":" + 
+                           String(now.getMinutes()).padStart(2, 0) + ":" + 
+                           String(now.getSeconds()).padStart(2, 0);
         document.getElementById('realtime-clock').innerHTML = dateString + ' | ' + timeString;
     }
-    setInterval(updateClock, 1000); // 1초마다 업데이트
-    updateClock(); // 초기 호출
+    setInterval(updateClock, 1000);
+    updateClock();
     </script>
     <div id="realtime-clock" style="font-size: 16px; font-weight: bold; color: #FF4B4B;"></div>
     """, height=30)
 
-# =========================================================================
-# (기존 날짜 변경 로직은 동일하게 유지됩니다.)
-# =========================================================================
-
-current_date = datetime.date.today().strftime('%Y-%m-%d')
-
-if 'session_initialized_date' not in st.session_state:
-    st.session_state.session_initialized_date = current_date
-
-if st.session_state.session_initialized_date != current_date:
-    for key in ['tasks', 'wakeup_checked', 'daily_reflection']:
-        if key in st.session_state:
-            del st.session_state[key]
-            
-    st.session_state.session_initialized_date = current_date
+# [새 함수] 캐시 초기화 및 세션 재시작
+def clear_cache_and_restart():
+    st.cache_data.clear() # 모든 데이터 캐시 삭제
+    st.cache_resource.clear() # 모든 리소스 캐시 삭제
+    st.session_state.clear() # 세션 상태 초기화
     st.rerun()
 
 # --- 1. 앱 기본 설정 ---
@@ -56,6 +44,7 @@ NON_STUDY_TASKS = [
 ]
 
 # --- 2. 헬퍼 함수 ---
+@st.cache_resource(ttl=3600) # Client 연결은 자주 하지 않도록 캐싱
 def get_gspread_client():
     """Google Sheet 클라이언트 객체를 반환합니다."""
     if "gcp_service_account" not in st.secrets:
@@ -101,6 +90,8 @@ def save_to_google_sheets(date, total_seconds, status, wakeup_success, tasks, ta
         st.error(f"저장 실패: {e}")
         return False
 
+# [수정] 데이터 로드 함수에 캐시 적용 (수동 초기화 기능에 의존)
+@st.cache_data(show_spinner="데이터를 로드하는 중...")
 def load_persistent_data():
     client = get_gspread_client()
     default_favorites = [
@@ -120,7 +111,8 @@ def load_persistent_data():
         d_day_date = default_d_day
         favorites = default_favorites
         daily_reflection = ""
-
+        
+        # ... (이하 로직은 동일)
         if records:
             df = pd.DataFrame(records)
             last_record = df.iloc[-1]
@@ -200,6 +192,12 @@ with st.sidebar:
 
     st.markdown("---") 
     
+    # [추가] 오류 해결용 캐시 초기화 버튼
+    if st.button("🔴 날짜/데이터 초기화 및 새로고침", type="primary"):
+        clear_cache_and_restart()
+    st.caption("날짜가 어제 날짜로 고정되었을 때 눌러주세요.")
+    st.markdown("---") 
+    
     st.subheader("🎧 몰입 사운드 (Focus Sound)")
     sound_option = st.selectbox("사운드 선택", ["선택 안 함", "빗소리 (Rain)", "카페 소음 (Cafe)", "알파파 (Alpha Waves)"])
     
@@ -251,7 +249,6 @@ mode = st.radio("모드 선택", ["Daily View (오늘의 공부)", "Monthly View
 # [모드 1] 데일리 뷰
 # ---------------------------------------------------------
 if mode == "Daily View (오늘의 공부)":
-    # [수정] 자바스크립트 시계를 오늘의 날짜 아래에 배치
     st.subheader(f"📅 {today.strftime('%Y-%m-%d')}")
     display_realtime_clock() 
     
