@@ -5,21 +5,19 @@ import time
 import gspread
 import json
 import calendar
-import streamlit.components.v1 as components 
 from oauth2client.service_account import ServiceAccountCredentials
 
-# --- 1. 앱 기본 설정 & 세션 초기화 ---
-st.set_page_config(page_title="CTA 합격 메이커", page_icon="📝", layout="wide")
+# ---------------------------------------------------------
+# [기능 추가] 타이머 실시간 작동을 위한 자동 새로고침
+# ---------------------------------------------------------
+try:
+    from streamlit_autorefresh import st_autorefresh
+except ImportError:
+    # 패키지가 없을 경우를 대비한 더미 함수 (에러 방지)
+    def st_autorefresh(interval, key): pass
 
-# [세션 상태 초기화]
-if 'view_mode' not in st.session_state:
-    st.session_state.view_mode = "Monthly View (캘린더)" # 초기 화면
-if 'selected_date' not in st.session_state:
-    st.session_state.selected_date = datetime.date.today() # 선택된 날짜
-if 'cal_year' not in st.session_state:
-    st.session_state.cal_year = datetime.date.today().year
-if 'cal_month' not in st.session_state:
-    st.session_state.cal_month = datetime.date.today().month
+# --- 1. 앱 기본 설정 ---
+st.set_page_config(page_title="CTA 합격 메이커", page_icon="📝", layout="wide")
 
 # [설정] 순공 시간에서 제외할 활동 리스트
 NON_STUDY_TASKS = [
@@ -45,7 +43,6 @@ def get_default_tasks():
         {"plan_time": "21:00", "task": "당일 학습 백지 복습", "accumulated": 0, "last_start": None, "is_running": False},
     ]
 
-# [수정] 날짜별 데이터 저장
 def save_to_google_sheets(date, total_seconds, status, wakeup_success, tasks, target_time, d_day_date, favorite_tasks, daily_reflection):
     try:
         client = get_gspread_client()
@@ -62,14 +59,12 @@ def save_to_google_sheets(date, total_seconds, status, wakeup_success, tasks, ta
         st.error(f"저장 실패: {e}")
         return False
 
-# [수정] 날짜별 데이터 로드 (target_date 기준)
 def load_data_for_date(target_date):
     client = get_gspread_client()
     default_favs = [
         {"plan_time": "08:00", "task": "아침 백지 복습", "key": "def_1"},
         {"plan_time": "21:00", "task": "당일 학습 백지 복습", "key": "def_2"}
     ]
-    # 기본값
     data = {
         'tasks': get_default_tasks(),
         'target_time': 10.0,
@@ -89,11 +84,9 @@ def load_data_for_date(target_date):
             df = pd.DataFrame(records)
             target_str = target_date.strftime('%Y-%m-%d')
             
-            # 1. 해당 날짜의 기록 찾기 (여러 개면 가장 최신 것)
             day_records = df[df['날짜'] == target_str]
             if not day_records.empty:
                 last_record = day_records.iloc[-1]
-                
                 if last_record.get('Tasks_JSON'):
                     try:
                         loaded_tasks = json.loads(last_record['Tasks_JSON'])
@@ -102,20 +95,12 @@ def load_data_for_date(target_date):
                             t['last_start'] = None
                         data['tasks'] = loaded_tasks
                     except: pass
-                else:
-                    data['tasks'] = [] # 빈 리스트 저장된 경우
+                else: data['tasks'] = []
                 
                 data['daily_reflection'] = last_record.get('Daily_Reflection', "")
-                if last_record.get('기상성공여부') == '성공':
-                    data['wakeup_checked'] = True
+                if last_record.get('기상성공여부') == '성공': data['wakeup_checked'] = True
 
-            # 2. 세팅값(D-Day, 목표시간, 즐겨찾기)은 날짜 상관없이 '가장 최신' 기록에서 가져오기 (연속성 유지)
-            # 단, 해당 날짜에 저장된 특정 목표시간이 있다면 그걸 우선할 수도 있으나, 
-            # 편의상 '설정'은 최신 상태를 유지하는 것이 일반적임.
-            # 여기서는 '해당 날짜에 저장된 기록이 있으면 그 당시 세팅'을, 없으면 '전체 최신 세팅'을 가져오는 로직 적용
-            
             ref_record = last_record if not day_records.empty else df.iloc[-1]
-            
             try: data['target_time'] = float(ref_record.get('Target_Time', 10.0))
             except: pass
             
@@ -129,9 +114,7 @@ def load_data_for_date(target_date):
                 except: pass
 
         return data
-
-    except Exception:
-        return data
+    except: return data
 
 def format_time(seconds):
     m, s = divmod(seconds, 60)
@@ -148,33 +131,34 @@ def get_status_color(achieved, target):
 def go_to_daily(date):
     st.session_state.selected_date = date
     st.session_state.view_mode = "Daily View (플래너)"
-    # 데이터 로드 트리거를 위해 세션 클리어 대신, 필요한 키만 업데이트 하는 방식 사용
-    # 여기서는 간편하게 rerun으로 처리하되, Daily View 진입 시 데이터 로드 로직이 돌도록 함
     st.rerun()
 
-# --- 3. 사이드바 UI (네비게이션) ---
+# --- 3. 세션 초기화 ---
+if 'view_mode' not in st.session_state: st.session_state.view_mode = "Monthly View (캘린더)"
+if 'selected_date' not in st.session_state: st.session_state.selected_date = datetime.date.today()
+if 'cal_year' not in st.session_state: st.session_state.cal_year = datetime.date.today().year
+if 'cal_month' not in st.session_state: st.session_state.cal_month = datetime.date.today().month
+
+# --- 4. 사이드바 ---
 with st.sidebar:
     st.header("🗂️ 메뉴")
-    
-    # 네비게이션 버튼
     if st.button("📅 Monthly View (캘린더)", use_container_width=True):
         st.session_state.view_mode = "Monthly View (캘린더)"
         st.rerun()
-    
     if st.button("📝 Daily View (플래너)", use_container_width=True):
         st.session_state.view_mode = "Daily View (플래너)"
         st.rerun()
-        
     if st.button("📊 Dashboard (대시보드)", use_container_width=True):
         st.session_state.view_mode = "Dashboard (대시보드)"
         st.rerun()
 
     st.markdown("---")
     
-    # [Daily View일 때만 설정 표시]
+    # [수정] 즐겨찾기 관리 기능 복구
     if st.session_state.view_mode == "Daily View (플래너)":
         st.subheader("⚙️ 설정")
-        # 데이터 로드 (현재 선택된 날짜 기준)
+        
+        # 데이터 로드 로직
         if 'loaded_date' not in st.session_state or st.session_state.loaded_date != st.session_state.selected_date:
             data = load_data_for_date(st.session_state.selected_date)
             st.session_state.tasks = data['tasks']
@@ -191,41 +175,48 @@ with st.sidebar:
             st.rerun()
             
         st.markdown("---")
-        st.subheader("🎧 몰입 사운드")
-        sound_option = st.selectbox("사운드 선택", ["무음", "빗소리", "카페", "알파파"])
-        if sound_option == "빗소리": st.audio("https://cdn.pixabay.com/download/audio/2022/07/04/audio_14e5b9f7a7.mp3", loop=True)
-        elif sound_option == "카페": st.audio("https://cdn.pixabay.com/download/audio/2021/08/09/audio_88447e769f.mp3", loop=True)
-        elif sound_option == "알파파": st.audio("https://cdn.pixabay.com/download/audio/2022/03/09/audio_c8c8a73467.mp3", loop=True)
+        st.subheader("⭐️ 즐겨찾기 관리")
+        with st.form("fav_manage_form", clear_on_submit=True):
+            f_time = st.time_input("시간", value=datetime.time(9,0))
+            f_task = st.text_input("루틴 내용")
+            if st.form_submit_button("루틴 생성"):
+                st.session_state.favorite_tasks.append({"plan_time": f_time.strftime("%H:%M"), "task": f_task, "key": f"{time.time()}"})
+                st.session_state.favorite_tasks.sort(key=lambda x: x['plan_time'])
+                st.rerun()
+        
+        if st.session_state.favorite_tasks:
+            fav_list = [f"{t['plan_time']} - {t['task']}" for t in st.session_state.favorite_tasks]
+            del_target = st.selectbox("삭제할 루틴", ["선택하세요"] + fav_list)
+            if st.button("선택한 루틴 삭제"):
+                if del_target != "선택하세요":
+                    idx = fav_list.index(del_target)
+                    del st.session_state.favorite_tasks[idx]
+                    st.rerun()
 
-# --- 4. 메인 UI 구현 ---
+# --- 5. 메인 UI ---
 
 # [VIEW 1] Monthly View (캘린더)
 if st.session_state.view_mode == "Monthly View (캘린더)":
-    st.title("📅 월간 스케줄 (Calendar)")
+    st.title("📅 월간 스케줄")
     
-    # 월 이동 컨트롤
     col_prev, col_curr, col_next = st.columns([1, 5, 1])
     with col_prev:
-        if st.button("◀ 이전 달"):
+        if st.button("◀"):
             if st.session_state.cal_month == 1:
                 st.session_state.cal_month = 12
                 st.session_state.cal_year -= 1
-            else:
-                st.session_state.cal_month -= 1
+            else: st.session_state.cal_month -= 1
             st.rerun()
     with col_curr:
         st.markdown(f"<h3 style='text-align: center;'>{st.session_state.cal_year}년 {st.session_state.cal_month}월</h3>", unsafe_allow_html=True)
     with col_next:
-        if st.button("다음 달 ▶"):
+        if st.button("▶"):
             if st.session_state.cal_month == 12:
                 st.session_state.cal_month = 1
                 st.session_state.cal_year += 1
-            else:
-                st.session_state.cal_month += 1
+            else: st.session_state.cal_month += 1
             st.rerun()
 
-    # 달력 그리기
-    # 1. DB에서 이번 달 데이터 가져오기 (날짜별 상태 표시용)
     status_map = {}
     try:
         client = get_gspread_client()
@@ -234,55 +225,48 @@ if st.session_state.view_mode == "Monthly View (캘린더)":
             records = sheet.get_all_records()
             if records:
                 df = pd.DataFrame(records)
-                # 날짜별 최신 상태 추출
                 df_latest = df.groupby('날짜').last().reset_index()
                 for _, row in df_latest.iterrows():
-                    status_map[row['날짜']] = row['상태'] # "🟢 Good" 등
+                    status_map[row['날짜']] = row['상태']
     except: pass
 
-    # 2. 달력 그리드 생성
     cal = calendar.monthcalendar(st.session_state.cal_year, st.session_state.cal_month)
     week_days = ['월', '화', '수', '목', '금', '토', '일']
     
-    # 요일 헤더
     cols = st.columns(7)
-    for i, day in enumerate(week_days):
-        cols[i].markdown(f"**{day}**", unsafe_allow_html=True)
+    for i, day in enumerate(week_days): cols[i].markdown(f"**{day}**", unsafe_allow_html=True)
     
-    # 날짜 셀
     for week in cal:
         cols = st.columns(7)
         for i, day in enumerate(week):
-            if day == 0:
-                cols[i].write("") # 빈 날짜
+            if day == 0: cols[i].write("")
             else:
-                current_day_date = datetime.date(st.session_state.cal_year, st.session_state.cal_month, day)
-                date_str = current_day_date.strftime('%Y-%m-%d')
+                curr_date = datetime.date(st.session_state.cal_year, st.session_state.cal_month, day)
+                d_str = curr_date.strftime('%Y-%m-%d')
                 
-                # 상태 아이콘 표시
                 status_icon = "⚪"
-                if date_str in status_map:
-                    if "Good" in status_map[date_str]: status_icon = "🟢"
-                    elif "Normal" in status_map[date_str]: status_icon = "🟡"
-                    elif "Bad" in status_map[date_str]: status_icon = "🔴"
+                if d_str in status_map:
+                    if "Good" in status_map[d_str]: status_icon = "🟢"
+                    elif "Normal" in status_map[d_str]: status_icon = "🟡"
+                    elif "Bad" in status_map[d_str]: status_icon = "🔴"
                 
-                # 오늘 날짜 강조
+                # [수정] TODAY 글자 삭제 (날짜와 아이콘만 표시)
                 label = f"{day} {status_icon}"
-                if current_day_date == datetime.date.today():
-                    label = f"TODAY {day} {status_icon}"
-                
-                if cols[i].button(label, key=f"cal_btn_{day}", use_container_width=True):
-                    go_to_daily(current_day_date)
+                if cols[i].button(label, key=f"cal_{day}", use_container_width=True):
+                    go_to_daily(curr_date)
 
 # [VIEW 2] Daily View (플래너)
 elif st.session_state.view_mode == "Daily View (플래너)":
+    # [수정] 타이머 작동 중일 때만 1초마다 자동 새로고침 (실시간 효과)
+    if any(t.get('is_running') for t in st.session_state.tasks):
+        st_autorefresh(interval=1000, key="timer_refresh")
+
     sel_date = st.session_state.selected_date
     d_day_delta = (st.session_state.d_day_date - sel_date).days
     d_day_str = f"D-{d_day_delta}" if d_day_delta > 0 else "D-Day"
     
     st.title(f"📝 {sel_date.strftime('%Y-%m-%d')} 플래너 ({d_day_str})")
     
-    # 상단: 기상 및 즐겨찾기
     c1, c2 = st.columns([1, 2])
     with c1:
         st.markdown("##### ☀️ 루틴 체크")
@@ -301,55 +285,67 @@ elif st.session_state.view_mode == "Daily View (플래너)":
 
     st.markdown("---")
     
-    # 타임테이블 리스트
-    st.session_state.tasks.sort(key=lambda x: x['plan_time'])
-    total_seconds = 0
-    
-    # 수동 추가
-    with st.expander("➕ 수동으로 할 일 추가하기"):
-        c1, c2, c3 = st.columns([1, 3, 1])
-        with c1: input_time = st.time_input("시간", value=datetime.time(9,0))
-        with c2: input_task = st.text_input("내용")
+    # [수정] 수동 추가 정렬 (vertical_alignment="bottom" 적용)
+    with st.container():
+        st.caption("➕ 수동으로 할 일 추가하기")
+        # Streamlit 최신 버전용 정렬. 에러 시 기본값 사용.
+        try:
+            c1, c2, c3 = st.columns([1, 3, 1], vertical_alignment="bottom")
+        except TypeError:
+            c1, c2, c3 = st.columns([1, 3, 1]) # 구버전 호환용
+            
+        with c1: input_time = st.time_input("시작 시간", value=datetime.time(9,0))
+        with c2: input_task = st.text_input("내용 입력", placeholder="과목명 등")
         with c3: 
             if st.button("등록", use_container_width=True):
                 st.session_state.tasks.append({"plan_time": input_time.strftime("%H:%M"), "task": input_task, "accumulated": 0, "last_start": None, "is_running": False})
                 st.rerun()
 
+    st.markdown("---")
+    
+    st.session_state.tasks.sort(key=lambda x: x['plan_time'])
+    total_seconds = 0
+    
     for i, task in enumerate(st.session_state.tasks):
-        c1, c2, c3, c4 = st.columns([1, 3, 2, 0.5])
+        # [수정] 타이머 버튼과 시간 표시를 위한 컬럼 비율 조정
+        c1, c2, c3, c4 = st.columns([1, 3, 2, 0.5], vertical_alignment="center")
+        
         with c1: st.text(f"{task['plan_time']}")
         with c2: st.markdown(f"**{task['task']}**")
         with c3:
             dur = task['accumulated']
-            if task['is_running']: dur += time.time() - task['last_start']
+            if task.get('is_running'): dur += time.time() - task['last_start']
             
+            # 타이머와 버튼 배치
             t1, t2 = st.columns([1, 1])
-            t1.markdown(f"`{format_time(dur)}`")
-            if sel_date == datetime.date.today(): # 오늘만 타이머 작동 가능
-                if task['is_running']:
-                    if t2.button("⏹️", key=f"stop_{i}"):
+            t1.markdown(f"⏱️ `{format_time(dur)}`")
+            
+            if sel_date == datetime.date.today():
+                if task.get('is_running'):
+                    # DuplicateKey 에러 방지를 위해 key에 index 추가
+                    if t2.button("⏹️ 중지", key=f"stop_{i}_{task['task']}"): 
                         task['accumulated'] += time.time() - task['last_start']
                         task['is_running'] = False
                         st.rerun()
                 else:
-                    if t2.button("▶️", key=f"start_{i}"):
+                    if t2.button("▶️ 시작", key=f"start_{i}_{task['task']}"):
                         task['is_running'] = True
                         task['last_start'] = time.time()
                         st.rerun()
             else:
-                t2.write("-") # 과거/미래는 타이머 불가
+                t2.write("-")
+        
         with c4:
-            if st.button("x", key=f"del_{i}"):
+            if st.button("x", key=f"del_{i}_{task['task']}"):
                 del st.session_state.tasks[i]
                 st.rerun()
         
         if task['task'] not in NON_STUDY_TASKS:
-            if task['is_running']: total_seconds += (task['accumulated'] + (time.time() - task['last_start']))
+            if task.get('is_running'): total_seconds += (task['accumulated'] + (time.time() - task['last_start']))
             else: total_seconds += task['accumulated']
 
     st.divider()
     
-    # 하단 성과
     st.session_state.target_time = st.number_input("목표 시간", value=st.session_state.target_time, step=0.5)
     hours = total_seconds / 3600
     status = get_status_color(hours, st.session_state.target_time)
@@ -359,7 +355,7 @@ elif st.session_state.view_mode == "Daily View (플래너)":
     k2.metric("달성률", f"{(hours/st.session_state.target_time)*100:.1f}%")
     k3.metric("평가", status)
     
-    st.session_state.daily_reflection = st.text_area("학습 일기", value=st.session_state.daily_reflection, placeholder="오늘의 피드백을 남겨주세요.")
+    st.session_state.daily_reflection = st.text_area("학습 일기", value=st.session_state.daily_reflection, height=100)
     
     if st.button(f"💾 {sel_date} 기록 저장하기", type="primary", use_container_width=True):
         if save_to_google_sheets(sel_date, total_seconds, status, st.session_state.wakeup_checked, st.session_state.tasks, st.session_state.target_time, st.session_state.d_day_date, st.session_state.favorite_tasks, st.session_state.daily_reflection):
@@ -376,14 +372,10 @@ elif st.session_state.view_mode == "Dashboard (대시보드)":
             records = sheet.get_all_records()
             if records:
                 df = pd.DataFrame(records)
-                # 날짜별 최신 데이터 필터링
                 df_latest = df.groupby('날짜').last().reset_index()
                 
-                # 통계 요약
                 total_days = len(df_latest)
-                if '기상성공여부' in df_latest.columns:
-                    wakeup_success = len(df_latest[df_latest['기상성공여부'] == '성공'])
-                else: wakeup_success = 0
+                wakeup_success = len(df_latest[df_latest['기상성공여부'] == '성공']) if '기상성공여부' in df_latest.columns else 0
                 
                 m1, m2, m3 = st.columns(3)
                 m1.metric("누적 학습일", f"{total_days}일")
