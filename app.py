@@ -139,28 +139,90 @@ if 'selected_date' not in st.session_state: st.session_state.selected_date = dat
 if 'cal_year' not in st.session_state: st.session_state.cal_year = datetime.date.today().year
 if 'cal_month' not in st.session_state: st.session_state.cal_month = datetime.date.today().month
 
-# --- 4. 사이드바 ---
+# --- 4. 사이드바 (네비게이션 및 설정) ---
 with st.sidebar:
     st.header("🗂️ 메뉴")
+    
+    # [네비게이션 함수] 이동 시도 시 타겟 설정
+    def safe_navigate(target_mode):
+        if st.session_state.view_mode == "Daily View (플래너)" and st.session_state.view_mode != target_mode:
+            st.session_state.nav_target = target_mode
+        else:
+            st.session_state.view_mode = target_mode
+            st.rerun()
+
+    # [저장 및 이동 팝업] 타겟이 설정되면 표시
+    if "nav_target" in st.session_state:
+        with st.status("💾 저장하고 이동할까요?", expanded=True):
+            st.write("현재 학습 기록을 저장하고\n화면을 이동합니다.")
+            
+            c_save, c_discard, c_cancel = st.columns([2, 1, 1], vertical_alignment="bottom")
+            
+            # 1. 저장 후 이동 버튼 (Primary)
+            if c_save.button("저장 & 이동", type="primary", use_container_width=True):
+                # 사이드바에서 실시간 저장 수행을 위한 데이터 계산
+                cur_total = 0
+                for t in st.session_state.tasks:
+                    if t['task'] not in NON_STUDY_TASKS:
+                        dur = t['accumulated']
+                        if t.get('is_running'): dur += time.time() - t['last_start']
+                        cur_total += dur
+                
+                cur_hours = cur_total / 3600
+                cur_status = get_status_color(cur_hours, st.session_state.target_time)
+                
+                # 저장 실행
+                if save_to_google_sheets(
+                    st.session_state.selected_date, 
+                    cur_total, 
+                    cur_status, 
+                    st.session_state.wakeup_checked, 
+                    st.session_state.tasks, 
+                    st.session_state.target_time, 
+                    st.session_state.d_day_date, 
+                    st.session_state.favorite_tasks, 
+                    st.session_state.daily_reflection
+                ):
+                    st.toast("✅ 저장 완료! 이동합니다.")
+                    time.sleep(0.5) # 토스트 메시지 볼 시간
+                    st.session_state.view_mode = st.session_state.nav_target
+                    del st.session_state.nav_target
+                    st.rerun()
+                else:
+                    st.error("저장 실패! 다시 시도해주세요.")
+
+            # 2. 그냥 이동 버튼 (Secondary)
+            if c_discard.button("저장 안함", use_container_width=True):
+                st.session_state.view_mode = st.session_state.nav_target
+                del st.session_state.nav_target
+                st.rerun()
+                
+            # 3. 취소 버튼 (현재 화면 유지)
+            if c_cancel.button("취소", use_container_width=True):
+                del st.session_state.nav_target
+                st.rerun()
+        st.divider()
+
+    # 메뉴 버튼들
     if st.button("📅 Monthly View (캘린더)", use_container_width=True):
-        st.session_state.view_mode = "Monthly View (캘린더)"
-        st.rerun()
+        safe_navigate("Monthly View (캘린더)")
+        
     if st.button("📝 Daily View (플래너)", use_container_width=True):
-        st.session_state.view_mode = "Daily View (플래너)"
-        st.rerun()
+        safe_navigate("Daily View (플래너)")
+        
     if st.button("📊 Dashboard (대시보드)", use_container_width=True):
-        st.session_state.view_mode = "Dashboard (대시보드)"
-        st.rerun()
+        safe_navigate("Dashboard (대시보드)")
 
     st.markdown("---")
     
-    # [수정] 즐겨찾기 관리 기능 복구
+    # [기존 기능 유지] 즐겨찾기 관리 (Daily View일 때만 표시)
     if st.session_state.view_mode == "Daily View (플래너)":
         st.subheader("⚙️ 설정")
         
-        # 데이터 로드 로직
+        # 데이터 로드 트리거
         if 'loaded_date' not in st.session_state or st.session_state.loaded_date != st.session_state.selected_date:
             data = load_data_for_date(st.session_state.selected_date)
+            # 세션 데이터 업데이트
             st.session_state.tasks = data['tasks']
             st.session_state.target_time = data['target_time']
             st.session_state.d_day_date = data['d_day_date']
@@ -494,6 +556,7 @@ with chat_col:
         
         st.session_state.messages.append({"role": "assistant", "content": response})
         st.rerun()
+
 
 
 
