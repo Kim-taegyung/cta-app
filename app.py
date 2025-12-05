@@ -456,114 +456,113 @@ with main_col:
 
         st.markdown("---")
         
-        # ---------------------------------------------------------
-        # ---------------------------------------------------------
-        # [1] 할 일 리스트 출력 및 제어 (수정됨)
-        # ---------------------------------------------------------
-        st.subheader("📋 오늘의 할 일")
+# ---------------------------------------------------------
+    # [1] 할 일 리스트 출력 및 제어 (수정됨)
+    # ---------------------------------------------------------
+    st.subheader("📋 오늘의 할 일")
+
+    # 시간순 정렬
+    st.session_state.tasks.sort(key=lambda x: x['plan_time'])
     
-        # 시간순 정렬
-        st.session_state.tasks.sort(key=lambda x: x['plan_time'])
+    # 통계 집계 변수 초기화
+    total_seconds = 0
+    cat_stats = {cat: 0 for cat in PROJECT_CATEGORIES} 
+    
+    # 리스트에 할 일이 없을 때 안내 문구
+    if not st.session_state.tasks:
+        st.info("👆 위 입력창에서 '등록' 버튼을 눌러 오늘의 할 일을 추가해보세요!")
+
+    # [UI 헤더] 리스트 상단에 작은 제목을 달아 정렬을 더 명확하게 함 (선택 사항)
+    # h_c1, h_c2, h_c3, h_c4, h_c5, h_c6 = st.columns([1.3, 1.2, 3.5, 1.2, 1, 0.5])
+    # h_c1.caption("시간")
+    # h_c2.caption("프로젝트")
+    # h_c3.caption("할 일")
+    # h_c4.caption("집중 시간")
+
+    # 할 일 루프 시작
+    for i, task in enumerate(st.session_state.tasks):
+        # [레이아웃 수정] 시간 | 카테고리 | 내용 | 타이머 | 버튼 | 삭제
+        # vertical_alignment="center"로 모든 요소를 수직 중앙 정렬
+        c_time, c_cat, c_task, c_timer, c_btn, c_del = st.columns([1.3, 1.2, 3.5, 1.2, 1, 0.5], vertical_alignment="center")
         
-        # 통계 집계 변수 초기화
-        total_seconds = 0
-        cat_stats = {cat: 0 for cat in PROJECT_CATEGORIES} 
+        # 1. [시간] (타이머 작동 중 수정 불가)
+        with c_time: 
+            try: t_obj = datetime.datetime.strptime(task['plan_time'], "%H:%M").time()
+            except: t_obj = datetime.time(0,0)
+            
+            new_time = st.time_input(
+                "time", 
+                value=t_obj, 
+                key=f"time_{i}", 
+                label_visibility="collapsed", 
+                disabled=task['is_running'] # [수정] 작동 중 비활성화
+            )
+            if new_time.strftime("%H:%M") != task['plan_time']:
+                task['plan_time'] = new_time.strftime("%H:%M")
+                st.rerun()
+
+        # 2. [카테고리] (별도 컬럼으로 분리하여 정렬)
+        with c_cat:
+            cat = task.get('category', 'CTA 공부')
+            color = CATEGORY_COLORS.get(cat, 'gray')
+            # 뱃지 형태로 중앙 정렬 표시
+            st.markdown(f":{color}[**{cat}**]") 
+
+        # 3. [내용] (타이머 작동 중 수정 불가)
+        with c_task:
+            task['task'] = st.text_input(
+                "task", 
+                value=task['task'], 
+                key=f"task_input_{i}", 
+                label_visibility="collapsed",
+                disabled=task['is_running'] # [수정] 작동 중 비활성화
+            )
+            
+        # 4. [타이머] 시간 표시
+        with c_timer:
+            dur = task['accumulated']
+            if task.get('is_running'): 
+                dur += time.time() - task['last_start']
+            
+            # 디지털 시계 느낌 (굵게)
+            st.markdown(f"⏱️ **`{format_time(dur)}`**")
+            
+        # 5. [버튼] 시작/중지
+        with c_btn:
+            if sel_date == today_kst:
+                if task.get('is_running'):
+                    if st.button("⏹️ 중지", key=f"stop_{i}", use_container_width=True):
+                        task['accumulated'] += time.time() - task['last_start']
+                        task['is_running'] = False
+                        st.rerun()
+                else:
+                    # 시작하지 않았을 때만 활성화
+                    if st.button("▶️ 시작", key=f"start_{i}", use_container_width=True, type="primary"):
+                        task['is_running'] = True
+                        task['last_start'] = time.time()
+                        st.rerun()
+            else:
+                st.caption("-")
+                    
+        # 6. [삭제]
+        with c_del:
+            # 작동 중엔 삭제도 막는 것이 안전함
+            if st.button("🗑️", key=f"del_{i}", disabled=task.get('is_running')):
+                del st.session_state.tasks[i]
+                st.rerun()
         
-        # 리스트에 할 일이 없을 때 안내 문구
-        if not st.session_state.tasks:
-            st.info("👆 위 입력창에서 '등록' 버튼을 눌러 오늘의 할 일을 추가해보세요!")
-    
-        # [UI 헤더] 리스트 상단에 작은 제목을 달아 정렬을 더 명확하게 함 (선택 사항)
-        # h_c1, h_c2, h_c3, h_c4, h_c5, h_c6 = st.columns([1.3, 1.2, 3.5, 1.2, 1, 0.5])
-        # h_c1.caption("시간")
-        # h_c2.caption("프로젝트")
-        # h_c3.caption("할 일")
-        # h_c4.caption("집중 시간")
-    
-        # 할 일 루프 시작
-        for i, task in enumerate(st.session_state.tasks):
-            # [레이아웃 수정] 시간 | 카테고리 | 내용 | 타이머 | 버튼 | 삭제
-            # vertical_alignment="center"로 모든 요소를 수직 중앙 정렬
-            c_time, c_cat, c_task, c_timer, c_btn, c_del = st.columns([1.3, 1.2, 3.5, 1.2, 1, 0.5], vertical_alignment="center")
+        # --- [통계 데이터 집계] ---
+        if task['task'] not in NON_STUDY_TASKS:
+            current_dur = task['accumulated']
+            if task.get('is_running'): 
+                current_dur += (time.time() - task['last_start'])
             
-            # 1. [시간] (타이머 작동 중 수정 불가)
-            with c_time: 
-                try: t_obj = datetime.datetime.strptime(task['plan_time'], "%H:%M").time()
-                except: t_obj = datetime.time(0,0)
-                
-                new_time = st.time_input(
-                    "time", 
-                    value=t_obj, 
-                    key=f"time_{i}", 
-                    label_visibility="collapsed", 
-                    disabled=task['is_running'] # [수정] 작동 중 비활성화
-                )
-                if new_time.strftime("%H:%M") != task['plan_time']:
-                    task['plan_time'] = new_time.strftime("%H:%M")
-                    st.rerun()
-    
-            # 2. [카테고리] (별도 컬럼으로 분리하여 정렬)
-            with c_cat:
-                cat = task.get('category', 'CTA 공부')
-                color = CATEGORY_COLORS.get(cat, 'gray')
-                # 뱃지 형태로 중앙 정렬 표시
-                st.markdown(f":{color}[**{cat}**]") 
-    
-            # 3. [내용] (타이머 작동 중 수정 불가)
-            with c_task:
-                task['task'] = st.text_input(
-                    "task", 
-                    value=task['task'], 
-                    key=f"task_input_{i}", 
-                    label_visibility="collapsed",
-                    disabled=task['is_running'] # [수정] 작동 중 비활성화
-                )
-                
-            # 4. [타이머] 시간 표시
-            with c_timer:
-                dur = task['accumulated']
-                if task.get('is_running'): 
-                    dur += time.time() - task['last_start']
-                
-                # 디지털 시계 느낌 (굵게)
-                st.markdown(f"⏱️ **`{format_time(dur)}`**")
-                
-            # 5. [버튼] 시작/중지
-            with c_btn:
-                if sel_date == today_kst:
-                    if task.get('is_running'):
-                        if st.button("⏹️ 중지", key=f"stop_{i}", use_container_width=True):
-                            task['accumulated'] += time.time() - task['last_start']
-                            task['is_running'] = False
-                            st.rerun()
-                    else:
-                        # 시작하지 않았을 때만 활성화
-                        if st.button("▶️ 시작", key=f"start_{i}", use_container_width=True, type="primary"):
-                            task['is_running'] = True
-                            task['last_start'] = time.time()
-                            st.rerun()
-                else:
-                    st.caption("-")
-                        
-            # 6. [삭제]
-            with c_del:
-                # 작동 중엔 삭제도 막는 것이 안전함
-                if st.button("🗑️", key=f"del_{i}", disabled=task.get('is_running')):
-                    del st.session_state.tasks[i]
-                    st.rerun()
+            total_seconds += current_dur
             
-            # --- [통계 데이터 집계] ---
-            if task['task'] not in NON_STUDY_TASKS:
-                current_dur = task['accumulated']
-                if task.get('is_running'): 
-                    current_dur += (time.time() - task['last_start'])
-                
-                total_seconds += current_dur
-                
-                if cat in cat_stats:
-                    cat_stats[cat] += current_dur
-                else:
-                    cat_stats[cat] = current_dur
+            if cat in cat_stats:
+                cat_stats[cat] += current_dur
+            else:
+                cat_stats[cat] = current_dur
         
         # ---------------------------------------------------------
         # [2] 하단 집중 리포트 (실시간 반영)
@@ -664,6 +663,7 @@ with chat_col:
         
         st.session_state.messages.append({"role": "assistant", "content": response})
         st.rerun()
+
 
 
 
