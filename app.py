@@ -263,7 +263,7 @@ with main_col:
                         go_to_daily(curr_date)
 
 # [VIEW 2] Daily View (플래너)
-elif st.session_state.view_mode == "Daily View (플래너)":
+ elif st.session_state.view_mode == "Daily View (플래너)":
     # [수정] 타이머 작동 중일 때만 1초마다 자동 새로고침 (실시간 효과)
     if any(t.get('is_running') for t in st.session_state.tasks):
         st_autorefresh(interval=1000, key="timer_refresh")
@@ -436,3 +436,4 @@ with chat_col:
         
         st.session_state.messages.append({"role": "assistant", "content": response})
         st.rerun()
+
