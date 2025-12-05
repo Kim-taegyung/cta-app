@@ -456,111 +456,141 @@ with main_col:
 
         st.markdown("---")
         
-        # 한국 시간 기준 오늘 날짜 계산
-        curr_utc = datetime.datetime.utcnow()
-        curr_kst = curr_utc + datetime.timedelta(hours=9)
-        today_kst = curr_kst.date()
-
-        # 시간순 정렬
-        st.session_state.tasks.sort(key=lambda x: x['plan_time'])
-        total_seconds = 0
-        
-        # [수정 2] 리스트 출력 및 수정 기능 구현
-        # 인덱스(i)를 사용하여 리스트를 순회하며 바로 수정 가능하게 함
-        for i, task in enumerate(st.session_state.tasks):
-            # 입력창이 들어가야 하므로 컬럼 비율을 조금 조정했습니다.
-            c1, c2, c3, c4 = st.columns([1.2, 3, 2.2, 0.5], vertical_alignment="center")
+        # ---------------------------------------------------------
+            # [1] 할 일 리스트 출력 및 제어 (여기에 붙여넣으세요)
+            # ---------------------------------------------------------
+            st.markdown("### 📋 오늘의 할 일")
             
-            # 1. 시간 수정 (Time Input)
-            with c1:
-                # 문자열 "HH:MM"을 time 객체로 변환
-                try:
-                    t_obj = datetime.datetime.strptime(task['plan_time'], "%H:%M").time()
-                except:
-                    t_obj = datetime.time(0,0)
-
-                # 타이머가 돌고 있으면 수정 불가능하게(disabled) 처리
-                new_time_val = st.time_input(
-                    "시간", 
-                    value=t_obj, 
-                    key=f"edit_time_{i}_{task['plan_time']}", 
-                    label_visibility="collapsed",
-                    disabled=task['is_running'] 
-                )
+            # 시간순 정렬
+            st.session_state.tasks.sort(key=lambda x: x['plan_time'])
+            
+            # 통계 집계 변수 초기화 (총 시간 및 카테고리별 시간)
+            total_seconds = 0
+            cat_stats = {cat: 0 for cat in PROJECT_CATEGORIES} 
+            
+            # 리스트에 할 일이 없을 때 안내 문구
+            if not st.session_state.tasks:
+                st.info("👆 위 입력창에서 '등록' 버튼을 눌러 오늘의 할 일을 추가해보세요!")
+        
+            # 할 일 루프 시작
+            for i, task in enumerate(st.session_state.tasks):
+                # 레이아웃: 시간(1) | 내용(3) | 타이머(2) | 삭제(0.5)
+                c1, c2, c3, c4 = st.columns([1, 3, 2, 0.5], vertical_alignment="center")
                 
-                # 시간이 변경되었다면 리스트 업데이트 후 리런 (재정렬 위해)
-                new_time_str = new_time_val.strftime("%H:%M")
-                if new_time_str != task['plan_time']:
-                    # 시간 변경 시에도 중복 체크 (선택 사항이나, 복잡해질 수 있어 여기선 단순 변경 허용하되 겹치면 경고 없이 덮어씌워질 수 있음. 
-                    # 안전을 위해 중복 체크 추가)
-                    existing_times_check = [t['plan_time'] for j, t in enumerate(st.session_state.tasks) if j != i]
-                    if new_time_str in existing_times_check:
-                         st.toast("⚠️ 이미 존재하는 시간입니다.", icon="🚫")
-                    else:
-                        task['plan_time'] = new_time_str
+                # 1. [시간] 수정 가능
+                with c1: 
+                    try: t_obj = datetime.datetime.strptime(task['plan_time'], "%H:%M").time()
+                    except: t_obj = datetime.time(0,0)
+                    
+                    # 타이머 도는 중엔 시간 수정 불가 (안전장치)
+                    new_time = st.time_input(
+                        "time", 
+                        value=t_obj, 
+                        key=f"time_{i}", 
+                        label_visibility="collapsed", 
+                        disabled=task['is_running']
+                    )
+                    # 시간이 바뀌면 즉시 업데이트하고 리런
+                    if new_time.strftime("%H:%M") != task['plan_time']:
+                        task['plan_time'] = new_time.strftime("%H:%M")
                         st.rerun()
-
-            # 2. 내용 수정 (Text Input)
-            with c2:
-                new_task_name = st.text_input(
-                    "내용", 
-                    value=task['task'], 
-                    key=f"edit_task_{i}_{task['task']}", 
-                    label_visibility="collapsed",
-                    disabled=task['is_running']
-                )
-                if new_task_name != task['task']:
-                    task['task'] = new_task_name
-                    # 텍스트만 바뀔 때는 굳이 리런 안 해도 되지만, 확실한 저장을 위해
-                    # session state는 참조형이라 자동 반영됨.
-
-            # 3. 타이머 및 버튼
-            with c3:
-                dur = task['accumulated']
-                if task.get('is_running'): dur += time.time() - task['last_start']
-                
-                t1, t2 = st.columns([1, 1.5])
-                t1.markdown(f"⏱️ `{format_time(dur)}`")
-                
-                if sel_date == today_kst:
+                        
+                # 2. [내용] 카테고리 뱃지 + 텍스트 수정
+                with c2:
+                    cat = task.get('category', 'CTA 공부') # 카테고리가 없으면 기본값
+                    color = CATEGORY_COLORS.get(cat, 'gray')
+                    
+                    # 카테고리 색상 뱃지 표시 (예: 파란색 글씨로 [CTA 공부])
+                    st.caption(f":{color}[● {cat}]") 
+                    
+                    # 할 일 내용 수정창
+                    task['task'] = st.text_input(
+                        "task", 
+                        value=task['task'], 
+                        key=f"task_input_{i}", 
+                        label_visibility="collapsed"
+                    )
+                    
+                # 3. [타이머] 시간 표시 및 버튼
+                with c3:
+                    dur = task['accumulated']
+                    # 현재 작동 중이라면 경과 시간 실시간 더하기
+                    if task.get('is_running'): 
+                        dur += time.time() - task['last_start']
+                    
+                    t_col1, t_col2 = st.columns([1, 1.2])
+                    
+                    # 시간 표시 (00:00:00)
+                    t_col1.markdown(f"**`{format_time(dur)}`**")
+                    
+                    # 버튼 로직
                     if task.get('is_running'):
-                        if t2.button("⏹️ 중지", key=f"stop_{i}", use_container_width=True): 
+                        if t_col2.button("⏹️ 중지", key=f"stop_{i}", use_container_width=True):
                             task['accumulated'] += time.time() - task['last_start']
                             task['is_running'] = False
                             st.rerun()
                     else:
-                        # 시작 버튼은 Primary 컬러로 강조
-                        if t2.button("▶️ 시작", key=f"start_{i}", use_container_width=True):
+                        # 시작 버튼 (Primary 컬러로 강조)
+                        if t_col2.button("▶️ 시작", key=f"start_{i}", use_container_width=True, type="primary"):
                             task['is_running'] = True
                             task['last_start'] = time.time()
                             st.rerun()
-                else:
-                    t2.caption("-")
+                            
+                # 4. [삭제]
+                with c4:
+                    if st.button("🗑️", key=f"del_{i}"):
+                        del st.session_state.tasks[i]
+                        st.rerun()
+                
+                # --- [통계 데이터 집계] ---
+                # "식사/운동" 등을 제외한 순수 집중 시간 계산
+                if task['task'] not in NON_STUDY_TASKS:
+                    current_dur = task['accumulated']
+                    if task.get('is_running'): 
+                        current_dur += (time.time() - task['last_start'])
+                    
+                    total_seconds += current_dur
+                    
+                    # 카테고리별 시간 합산
+                    if cat in cat_stats:
+                        cat_stats[cat] += current_dur
+                    else:
+                        cat_stats[cat] = current_dur
+        
+            st.markdown("---")
             
-            # 4. 삭제 버튼
-            with c4:
-                if st.button("x", key=f"del_{i}"):
-                    del st.session_state.tasks[i]
-                    st.rerun()
+            # ---------------------------------------------------------
+            # [2] 하단 집중 리포트 (실시간 반영)
+            # ---------------------------------------------------------
+            st.subheader("📊 오늘의 집중 리포트")
             
-            # 총 집중 시간 계산
-            if task['task'] not in NON_STUDY_TASKS:
-                if task.get('is_running'): total_seconds += (task['accumulated'] + (time.time() - task['last_start']))
-                else: total_seconds += task['accumulated']
-
-        st.divider()
+            total_hours = total_seconds / 3600
+            target = st.session_state.target_time if st.session_state.target_time > 0 else 1 
+            
+            # 1. 메트릭 (Metric)
+            m1, m2, m3 = st.columns(3)
+            m1.metric("총 집중 시간", format_time(total_seconds), help="식사/휴식 시간을 제외한 순수 집중 시간입니다.")
+            m2.metric("목표 달성률", f"{(total_hours/target)*100:.1f}%")
+            m3.metric("평가", get_status_color(total_hours, st.session_state.target_time))
+            
+            # 2. 프로젝트별 투입 비율 (Progress Bar)
+            st.write("###### 📈 프로젝트별 투입 비율")
+            
+            if total_seconds > 0:
+                for cat in PROJECT_CATEGORIES:
+                    sec = cat_stats.get(cat, 0)
+                    if sec > 0:
+                        ratio = sec / total_seconds
+                        color_name = CATEGORY_COLORS.get(cat, "gray")
+                        
+                        # 라벨 표시 (예: CTA 공부: 02:30:00 (50%))
+                        st.caption(f":{color_name}[{cat}] : {format_time(sec)} ({ratio*100:.1f}%)")
+                        # 프로그레스 바
+                        st.progress(ratio)
+            else:
+                st.info("아직 집중 시간이 기록되지 않았습니다. 타이머를 시작해보세요!")
         
-        # ... (이하 하단 저장 로직은 기존과 동일) ...
-        st.session_state.target_time = st.number_input("목표 시간", value=st.session_state.target_time, step=0.5)
-        hours = total_seconds / 3600
-        status = get_status_color(hours, st.session_state.target_time)
-        
-        k1, k2, k3 = st.columns(3)
-        k1.metric("총 집중 시간", format_time(total_seconds))
-        k2.metric("달성률", f"{(hours/st.session_state.target_time)*100:.1f}%")
-        k3.metric("평가", status)
-        
-        st.session_state.daily_reflection = st.text_area("학습 일기", value=st.session_state.daily_reflection, height=100)
+            st.divider()
         
         if st.button(f"💾 {sel_date} 기록 저장하기", type="primary", use_container_width=True):
             if save_to_google_sheets(sel_date, total_seconds, status, st.session_state.wakeup_checked, st.session_state.tasks, st.session_state.target_time, st.session_state.d_day_date, st.session_state.favorite_tasks, st.session_state.daily_reflection):
@@ -628,5 +658,6 @@ with chat_col:
         
         st.session_state.messages.append({"role": "assistant", "content": response})
         st.rerun()
+
 
 
