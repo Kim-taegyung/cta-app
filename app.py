@@ -457,140 +457,140 @@ with main_col:
         st.markdown("---")
         
         # ---------------------------------------------------------
-            # [1] 할 일 리스트 출력 및 제어 (여기에 붙여넣으세요)
-            # ---------------------------------------------------------
-            st.markdown("### 📋 오늘의 할 일")
-            
-            # 시간순 정렬
-            st.session_state.tasks.sort(key=lambda x: x['plan_time'])
-            
-            # 통계 집계 변수 초기화 (총 시간 및 카테고리별 시간)
-            total_seconds = 0
-            cat_stats = {cat: 0 for cat in PROJECT_CATEGORIES} 
-            
-            # 리스트에 할 일이 없을 때 안내 문구
-            if not st.session_state.tasks:
-                st.info("👆 위 입력창에서 '등록' 버튼을 눌러 오늘의 할 일을 추가해보세요!")
+        # [1] 할 일 리스트 출력 및 제어 (여기에 붙여넣으세요)
+        # ---------------------------------------------------------
+        st.markdown("### 📋 오늘의 할 일")
         
-            # 할 일 루프 시작
-            for i, task in enumerate(st.session_state.tasks):
-                # 레이아웃: 시간(1) | 내용(3) | 타이머(2) | 삭제(0.5)
-                c1, c2, c3, c4 = st.columns([1, 3, 2, 0.5], vertical_alignment="center")
+        # 시간순 정렬
+        st.session_state.tasks.sort(key=lambda x: x['plan_time'])
+        
+        # 통계 집계 변수 초기화 (총 시간 및 카테고리별 시간)
+        total_seconds = 0
+        cat_stats = {cat: 0 for cat in PROJECT_CATEGORIES} 
+        
+        # 리스트에 할 일이 없을 때 안내 문구
+        if not st.session_state.tasks:
+            st.info("👆 위 입력창에서 '등록' 버튼을 눌러 오늘의 할 일을 추가해보세요!")
+    
+        # 할 일 루프 시작
+        for i, task in enumerate(st.session_state.tasks):
+            # 레이아웃: 시간(1) | 내용(3) | 타이머(2) | 삭제(0.5)
+            c1, c2, c3, c4 = st.columns([1, 3, 2, 0.5], vertical_alignment="center")
+            
+            # 1. [시간] 수정 가능
+            with c1: 
+                try: t_obj = datetime.datetime.strptime(task['plan_time'], "%H:%M").time()
+                except: t_obj = datetime.time(0,0)
                 
-                # 1. [시간] 수정 가능
-                with c1: 
-                    try: t_obj = datetime.datetime.strptime(task['plan_time'], "%H:%M").time()
-                    except: t_obj = datetime.time(0,0)
+                # 타이머 도는 중엔 시간 수정 불가 (안전장치)
+                new_time = st.time_input(
+                    "time", 
+                    value=t_obj, 
+                    key=f"time_{i}", 
+                    label_visibility="collapsed", 
+                    disabled=task['is_running']
+                )
+                # 시간이 바뀌면 즉시 업데이트하고 리런
+                if new_time.strftime("%H:%M") != task['plan_time']:
+                    task['plan_time'] = new_time.strftime("%H:%M")
+                    st.rerun()
                     
-                    # 타이머 도는 중엔 시간 수정 불가 (안전장치)
-                    new_time = st.time_input(
-                        "time", 
-                        value=t_obj, 
-                        key=f"time_{i}", 
-                        label_visibility="collapsed", 
-                        disabled=task['is_running']
-                    )
-                    # 시간이 바뀌면 즉시 업데이트하고 리런
-                    if new_time.strftime("%H:%M") != task['plan_time']:
-                        task['plan_time'] = new_time.strftime("%H:%M")
+            # 2. [내용] 카테고리 뱃지 + 텍스트 수정
+            with c2:
+                cat = task.get('category', 'CTA 공부') # 카테고리가 없으면 기본값
+                color = CATEGORY_COLORS.get(cat, 'gray')
+                
+                # 카테고리 색상 뱃지 표시 (예: 파란색 글씨로 [CTA 공부])
+                st.caption(f":{color}[● {cat}]") 
+                
+                # 할 일 내용 수정창
+                task['task'] = st.text_input(
+                    "task", 
+                    value=task['task'], 
+                    key=f"task_input_{i}", 
+                    label_visibility="collapsed"
+                )
+                
+            # 3. [타이머] 시간 표시 및 버튼
+            with c3:
+                dur = task['accumulated']
+                # 현재 작동 중이라면 경과 시간 실시간 더하기
+                if task.get('is_running'): 
+                    dur += time.time() - task['last_start']
+                
+                t_col1, t_col2 = st.columns([1, 1.2])
+                
+                # 시간 표시 (00:00:00)
+                t_col1.markdown(f"**`{format_time(dur)}`**")
+                
+                # 버튼 로직
+                if task.get('is_running'):
+                    if t_col2.button("⏹️ 중지", key=f"stop_{i}", use_container_width=True):
+                        task['accumulated'] += time.time() - task['last_start']
+                        task['is_running'] = False
+                        st.rerun()
+                else:
+                    # 시작 버튼 (Primary 컬러로 강조)
+                    if t_col2.button("▶️ 시작", key=f"start_{i}", use_container_width=True, type="primary"):
+                        task['is_running'] = True
+                        task['last_start'] = time.time()
                         st.rerun()
                         
-                # 2. [내용] 카테고리 뱃지 + 텍스트 수정
-                with c2:
-                    cat = task.get('category', 'CTA 공부') # 카테고리가 없으면 기본값
-                    color = CATEGORY_COLORS.get(cat, 'gray')
-                    
-                    # 카테고리 색상 뱃지 표시 (예: 파란색 글씨로 [CTA 공부])
-                    st.caption(f":{color}[● {cat}]") 
-                    
-                    # 할 일 내용 수정창
-                    task['task'] = st.text_input(
-                        "task", 
-                        value=task['task'], 
-                        key=f"task_input_{i}", 
-                        label_visibility="collapsed"
-                    )
-                    
-                # 3. [타이머] 시간 표시 및 버튼
-                with c3:
-                    dur = task['accumulated']
-                    # 현재 작동 중이라면 경과 시간 실시간 더하기
-                    if task.get('is_running'): 
-                        dur += time.time() - task['last_start']
-                    
-                    t_col1, t_col2 = st.columns([1, 1.2])
-                    
-                    # 시간 표시 (00:00:00)
-                    t_col1.markdown(f"**`{format_time(dur)}`**")
-                    
-                    # 버튼 로직
-                    if task.get('is_running'):
-                        if t_col2.button("⏹️ 중지", key=f"stop_{i}", use_container_width=True):
-                            task['accumulated'] += time.time() - task['last_start']
-                            task['is_running'] = False
-                            st.rerun()
-                    else:
-                        # 시작 버튼 (Primary 컬러로 강조)
-                        if t_col2.button("▶️ 시작", key=f"start_{i}", use_container_width=True, type="primary"):
-                            task['is_running'] = True
-                            task['last_start'] = time.time()
-                            st.rerun()
-                            
-                # 4. [삭제]
-                with c4:
-                    if st.button("🗑️", key=f"del_{i}"):
-                        del st.session_state.tasks[i]
-                        st.rerun()
+            # 4. [삭제]
+            with c4:
+                if st.button("🗑️", key=f"del_{i}"):
+                    del st.session_state.tasks[i]
+                    st.rerun()
+            
+            # --- [통계 데이터 집계] ---
+            # "식사/운동" 등을 제외한 순수 집중 시간 계산
+            if task['task'] not in NON_STUDY_TASKS:
+                current_dur = task['accumulated']
+                if task.get('is_running'): 
+                    current_dur += (time.time() - task['last_start'])
                 
-                # --- [통계 데이터 집계] ---
-                # "식사/운동" 등을 제외한 순수 집중 시간 계산
-                if task['task'] not in NON_STUDY_TASKS:
-                    current_dur = task['accumulated']
-                    if task.get('is_running'): 
-                        current_dur += (time.time() - task['last_start'])
-                    
-                    total_seconds += current_dur
-                    
-                    # 카테고리별 시간 합산
-                    if cat in cat_stats:
-                        cat_stats[cat] += current_dur
-                    else:
-                        cat_stats[cat] = current_dur
+                total_seconds += current_dur
+                
+                # 카테고리별 시간 합산
+                if cat in cat_stats:
+                    cat_stats[cat] += current_dur
+                else:
+                    cat_stats[cat] = current_dur
+    
+        st.markdown("---")
         
-            st.markdown("---")
-            
-            # ---------------------------------------------------------
-            # [2] 하단 집중 리포트 (실시간 반영)
-            # ---------------------------------------------------------
-            st.subheader("📊 오늘의 집중 리포트")
-            
-            total_hours = total_seconds / 3600
-            target = st.session_state.target_time if st.session_state.target_time > 0 else 1 
-            
-            # 1. 메트릭 (Metric)
-            m1, m2, m3 = st.columns(3)
-            m1.metric("총 집중 시간", format_time(total_seconds), help="식사/휴식 시간을 제외한 순수 집중 시간입니다.")
-            m2.metric("목표 달성률", f"{(total_hours/target)*100:.1f}%")
-            m3.metric("평가", get_status_color(total_hours, st.session_state.target_time))
-            
-            # 2. 프로젝트별 투입 비율 (Progress Bar)
-            st.write("###### 📈 프로젝트별 투입 비율")
-            
-            if total_seconds > 0:
-                for cat in PROJECT_CATEGORIES:
-                    sec = cat_stats.get(cat, 0)
-                    if sec > 0:
-                        ratio = sec / total_seconds
-                        color_name = CATEGORY_COLORS.get(cat, "gray")
-                        
-                        # 라벨 표시 (예: CTA 공부: 02:30:00 (50%))
-                        st.caption(f":{color_name}[{cat}] : {format_time(sec)} ({ratio*100:.1f}%)")
-                        # 프로그레스 바
-                        st.progress(ratio)
-            else:
-                st.info("아직 집중 시간이 기록되지 않았습니다. 타이머를 시작해보세요!")
+        # ---------------------------------------------------------
+        # [2] 하단 집중 리포트 (실시간 반영)
+        # ---------------------------------------------------------
+        st.subheader("📊 오늘의 집중 리포트")
         
-            st.divider()
+        total_hours = total_seconds / 3600
+        target = st.session_state.target_time if st.session_state.target_time > 0 else 1 
+        
+        # 1. 메트릭 (Metric)
+        m1, m2, m3 = st.columns(3)
+        m1.metric("총 집중 시간", format_time(total_seconds), help="식사/휴식 시간을 제외한 순수 집중 시간입니다.")
+        m2.metric("목표 달성률", f"{(total_hours/target)*100:.1f}%")
+        m3.metric("평가", get_status_color(total_hours, st.session_state.target_time))
+        
+        # 2. 프로젝트별 투입 비율 (Progress Bar)
+        st.write("###### 📈 프로젝트별 투입 비율")
+        
+        if total_seconds > 0:
+            for cat in PROJECT_CATEGORIES:
+                sec = cat_stats.get(cat, 0)
+                if sec > 0:
+                    ratio = sec / total_seconds
+                    color_name = CATEGORY_COLORS.get(cat, "gray")
+                    
+                    # 라벨 표시 (예: CTA 공부: 02:30:00 (50%))
+                    st.caption(f":{color_name}[{cat}] : {format_time(sec)} ({ratio*100:.1f}%)")
+                    # 프로그레스 바
+                    st.progress(ratio)
+        else:
+            st.info("아직 집중 시간이 기록되지 않았습니다. 타이머를 시작해보세요!")
+    
+        st.divider()
         
         if st.button(f"💾 {sel_date} 기록 저장하기", type="primary", use_container_width=True):
             if save_to_google_sheets(sel_date, total_seconds, status, st.session_state.wakeup_checked, st.session_state.tasks, st.session_state.target_time, st.session_state.d_day_date, st.session_state.favorite_tasks, st.session_state.daily_reflection):
@@ -658,6 +658,7 @@ with chat_col:
         
         st.session_state.messages.append({"role": "assistant", "content": response})
         st.rerun()
+
 
 
 
