@@ -65,8 +65,8 @@ def load_persistent_data():
     client = get_gspread_client()
     # [수정] 21시 즐겨찾기 이름 수정 반영
     default_favorites = [
-        {"plan_time": "08:00", "task": "아침 백지 복습", "key": "08:00_아침 백지 복습"},
-        {"plan_time": "21:00", "task": "당일 학습 백지 복습", "key": "21:00_당일 학습 백지 복습"}
+        {"plan_time": "09:00", "task": "오전 학습 세션", "key": "09:00_오전 학습 세션"},
+        {"plan_time": "15:00", "task": "오후 학습 세션", "key": "15:00_오후 학습 세션션"}
     ]
     if client is None: return get_default_tasks(), 10.0, datetime.date(2026, 5, 1), default_favorites, ""
 
@@ -384,3 +384,4 @@ else:
             else: st.info("아직 저장된 기록이 없습니다.")
         else: st.warning("구글 시트 연동 설정(Secrets)이 필요합니다.")
     except Exception as e: st.warning(f"데이터 로드 중 오류: {e}")
+
