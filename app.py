@@ -288,7 +288,6 @@ elif st.session_state.view_mode == "Daily View (플래너)":
     # [수정] 수동 추가 정렬 (vertical_alignment="bottom" 적용)
     with st.container():
         st.caption("➕ 수동으로 할 일 추가하기")
-        # Streamlit 최신 버전용 정렬. 에러 시 기본값 사용.
         try:
             c1, c2, c3 = st.columns([1, 3, 1], vertical_alignment="bottom")
         except TypeError:
@@ -303,12 +302,17 @@ elif st.session_state.view_mode == "Daily View (플래너)":
 
     st.markdown("---")
     
+    # [중요 수정] 한국 시간(KST) 기준 오늘 날짜 정의 (서버 시간 오차 해결)
+    curr_utc = datetime.datetime.utcnow()
+    curr_kst = curr_utc + datetime.timedelta(hours=9)
+    today_kst = curr_kst.date()
+
     st.session_state.tasks.sort(key=lambda x: x['plan_time'])
     total_seconds = 0
     
     for i, task in enumerate(st.session_state.tasks):
-        # [수정] 타이머 버튼과 시간 표시를 위한 컬럼 비율 조정
-        c1, c2, c3, c4 = st.columns([1, 3, 2, 0.5], vertical_alignment="center")
+        # [수정] 타이머 버튼과 시간 표시를 위한 컬럼 비율 조정 (c3 확대)
+        c1, c2, c3, c4 = st.columns([1, 3, 2.2, 0.5], vertical_alignment="center")
         
         with c1: st.text(f"{task['plan_time']}")
         with c2: st.markdown(f"**{task['task']}**")
@@ -316,24 +320,26 @@ elif st.session_state.view_mode == "Daily View (플래너)":
             dur = task['accumulated']
             if task.get('is_running'): dur += time.time() - task['last_start']
             
-            # 타이머와 버튼 배치
-            t1, t2 = st.columns([1, 1])
+            # [수정] 버튼 공간 확보 (1:1.5 비율)
+            t1, t2 = st.columns([1, 1.5])
             t1.markdown(f"⏱️ `{format_time(dur)}`")
             
-            if sel_date == datetime.date.today():
+            # [수정] datetime.date.today() 대신 today_kst(한국시간) 사용
+            if sel_date == today_kst:
                 if task.get('is_running'):
                     # DuplicateKey 에러 방지를 위해 key에 index 추가
-                    if t2.button("⏹️ 중지", key=f"stop_{i}_{task['task']}"): 
+                    # use_container_width=True 로 버튼 너비 꽉 채움
+                    if t2.button("⏹️ 중지", key=f"stop_{i}_{task['task']}", use_container_width=True): 
                         task['accumulated'] += time.time() - task['last_start']
                         task['is_running'] = False
                         st.rerun()
                 else:
-                    if t2.button("▶️ 시작", key=f"start_{i}_{task['task']}"):
+                    if t2.button("▶️ 시작", key=f"start_{i}_{task['task']}", use_container_width=True):
                         task['is_running'] = True
                         task['last_start'] = time.time()
                         st.rerun()
             else:
-                t2.write("-")
+                t2.caption("-")
         
         with c4:
             if st.button("x", key=f"del_{i}_{task['task']}"):
@@ -392,3 +398,4 @@ elif st.session_state.view_mode == "Dashboard (대시보드)":
                 st.info("아직 데이터가 없습니다.")
     except:
         st.error("데이터 로드 중 오류가 발생했습니다.")
+
