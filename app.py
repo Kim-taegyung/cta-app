@@ -396,7 +396,7 @@ with main_col:
                             st.rerun()
                     else:
                         # 시작 버튼은 Primary 컬러로 강조
-                        if t2.button("▶️ 시작", key=f"start_{i}", use_container_width=True, type="primary"):
+                        if t2.button("▶️ 시작", key=f"start_{i}", use_container_width=True):
                             task['is_running'] = True
                             task['last_start'] = time.time()
                             st.rerun()
@@ -494,6 +494,7 @@ with chat_col:
         
         st.session_state.messages.append({"role": "assistant", "content": response})
         st.rerun()
+
 
 
 
