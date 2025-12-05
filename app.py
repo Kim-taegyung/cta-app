@@ -7,40 +7,6 @@ import json
 import streamlit.components.v1 as components 
 from oauth2client.service_account import ServiceAccountCredentials
 
-# =========================================================================
-# [새로운 헬퍼 함수] 캐시 초기화 및 세션 재시작 함수
-# =========================================================================
-def clear_cache_and_restart():
-    """모든 캐시와 세션 상태를 삭제하고 재시작합니다."""
-    st.cache_data.clear()
-    st.cache_resource.clear()
-    if 'session_initialized_date' in st.session_state:
-         del st.session_state.session_initialized_date # 플래그 삭제
-    st.rerun()
-
-def display_realtime_clock():
-    """JavaScript를 사용하여 실시간 시계를 매초 업데이트합니다."""
-    components.html("""
-    <script>
-    function updateClock() {
-        const now = new Date();
-        const options = {year: 'numeric', month: '2-digit', day: '2-digit'};
-        const dateString = now.toLocaleDateString('ko-KR', options).replace(/ /g, '').replace(/\.$/, '').replace(/\./g, '-');
-        const timeString = String(now.getHours()).padStart(2, 0) + ":" + 
-                           String(now.getMinutes()).padStart(2, 0) + ":" + 
-                           String(now.getSeconds()).padStart(2, 0);
-        document.getElementById('realtime-clock').innerHTML = dateString + ' | ' + timeString;
-    }
-    setInterval(updateClock, 1000);
-    updateClock();
-    </script>
-    <div id="realtime-clock" style="font-size: 16px; font-weight: bold; color: #FF4B4B;"></div>
-    """, height=30)
-# =========================================================================
-# (이하 기존 코드는 동일하게 이어집니다.)
-# =========================================================================
-
-
 # --- 1. 앱 기본 설정 ---
 st.set_page_config(page_title="CTA 합격 메이커", page_icon="📝", layout="wide")
 
@@ -386,3 +352,4 @@ else:
             else: st.info("아직 저장된 기록이 없습니다.")
         else: st.warning("구글 시트 연동 설정(Secrets)이 필요합니다.")
     except Exception as e: st.warning(f"데이터 로드 중 오류: {e}")
+
