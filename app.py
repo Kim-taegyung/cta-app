@@ -64,35 +64,108 @@ if 'wakeup_checked' not in st.session_state:
     st.session_state.wakeup_checked = False
 if 'd_day_date' not in st.session_state:
     st.session_state.d_day_date = datetime.date(2026, 5, 1)
+if 'alert_minutes_before' not in st.session_state:
+    st.session_state.alert_minutes_before = 5 
+    
+# [추가] 즐겨찾는 할 일 리스트
+if 'favorite_tasks' not in st.session_state:
+    st.session_state.favorite_tasks = [
+        {"plan_time": "08:00", "task": "전일 복습 (백지)", "key": "08:00_전일 복습 (백지)"},
+        {"plan_time": "21:00", "task": "세법학 암기", "key": "21:00_세법학 암기"}
+    ]
 
-# --- 4. 메인 UI 및 알림 로직 ---
+# --- 4. 사이드바 (설정 & 즐겨찾기 관리) ---
 with st.sidebar:
     st.header("⚙️ 설정")
+    
+    st.subheader("시험 목표 설정")
     new_d_day = st.date_input("시험 예정일 (D-Day)", value=st.session_state.d_day_date)
     if new_d_day != st.session_state.d_day_date:
         st.session_state.d_day_date = new_d_day
         st.rerun()
 
+    st.markdown("---") 
+    
+    st.subheader("텔레그램 알림 설정")
+    new_alert_minutes = st.slider(
+        "계획 시간 몇 분 전에 알릴까요?", 
+        min_value=0, max_value=30, value=st.session_state.alert_minutes_before, step=1
+    )
+    if new_alert_minutes != st.session_state.alert_minutes_before:
+        st.session_state.alert_minutes_before = new_alert_minutes
+        st.rerun()
+        
+    st.markdown("---") 
+    
+    # [추가] 즐겨찾기 관리 섹션
+    st.subheader("⭐️ 즐겨찾는 루틴 관리")
+    
+    with st.form("favorite_form", clear_on_submit=True):
+        fav_time = st.time_input("루틴 시간", value=datetime.time(9, 0), key="fav_time")
+        fav_task = st.text_input("루틴 내용", placeholder="예: 백지 복습", key="fav_task")
+        submitted = st.form_submit_button("즐겨찾기 추가")
+        
+        if submitted and fav_task:
+            new_fav = {
+                "plan_time": fav_time.strftime("%H:%M"), 
+                "task": fav_task, 
+                "key": f"{fav_time.strftime('%H:%M')}_{fav_task}"
+            }
+            if new_fav not in st.session_state.favorite_tasks:
+                st.session_state.favorite_tasks.append(new_fav)
+                st.session_state.favorite_tasks.sort(key=lambda x: x['plan_time'])
+                st.success("루틴이 추가되었습니다!")
+            else:
+                st.warning("이미 등록된 루틴입니다.")
+
+    if st.session_state.favorite_tasks:
+        fav_options = [f"{f['plan_time']} - {f['task']}" for f in st.session_state.favorite_tasks]
+        
+        # 삭제 기능
+        fav_to_delete = st.multiselect("삭제할 루틴 선택", options=fav_options)
+        if st.button("선택 루틴 삭제", type="secondary"):
+            if fav_to_delete:
+                keys_to_delete = [opt.split(" - ", 1) for opt in fav_to_delete]
+                keys_to_delete = [f"{k[0]}_{k[1]}" for k in keys_to_delete]
+                
+                st.session_state.favorite_tasks = [
+                    f for f in st.session_state.favorite_tasks if f['key'] not in keys_to_delete
+                ]
+                st.success("루틴이 삭제되었습니다.")
+                st.rerun()
+
+# --- 5. 메인 UI 및 알림 로직 ---
 today = datetime.date.today()
 d_day_delta = (st.session_state.d_day_date - today).days
 d_day_str = f"D-{d_day_delta}" if d_day_delta > 0 else (f"D+{abs(d_day_delta)}" if d_day_delta < 0 else "D-Day")
 
 st.title(f"📝 CTA 합격 메이커 ({d_day_str})")
-
 mode = st.radio("모드 선택", ["Daily View (오늘의 공부)", "Monthly View (대시보드)"], horizontal=True)
 
 # [알림 체크 로직] - 앱이 켜져 있는 동안 매분 체크
-now_str = datetime.datetime.now().strftime("%H:%M")
+now = datetime.datetime.now()
+alert_delta = datetime.timedelta(minutes=st.session_state.alert_minutes_before)
+
 for task in st.session_state.tasks:
     if "alert_sent" not in task: task["alert_sent"] = False
     
-    # 시간이 같고 + 아직 안 보냈고 + 시작 전이면 알림 발송
-    if task['plan_time'] == now_str and not task['alert_sent']:
-        msg = f"🔔 [공부 시작 알림]\n지금은 '{task['task']}' 공부할 시간입니다!\n책상에 앉으세요! 🔥"
+    plan_time_dt = datetime.datetime.combine(today, datetime.datetime.strptime(task['plan_time'], "%H:%M").time())
+    target_alert_time = plan_time_dt - alert_delta
+    
+    # 현재 시간이 알림 시간의 1분 범위 내에 들어오는지 확인
+    if target_alert_time.hour == now.hour and target_alert_time.minute == now.minute and not task['alert_sent']:
+        msg = (
+            f"🔔 [공부 시작 **{st.session_state.alert_minutes_before}분 전** 알림]\n"
+            f"지금은 잠시 후 {task['plan_time']}에 **'{task['task']}'** 공부를 시작할 시간입니다!\n"
+            f"휴식을 정리하고 책상에 앉으세요! 🔥"
+        )
         send_telegram_msg(msg)
         task['alert_sent'] = True
-        st.toast(f"🔔 텔레그램 발송 완료: {task['task']}")
+        st.toast(f"🔔 텔레그램 발송 완료: {task['task']} (알림 설정: {st.session_state.alert_minutes_before}분 전)")
 
+# ---------------------------------------------------------
+# [모드 1] 데일리 뷰
+# ---------------------------------------------------------
 if mode == "Daily View (오늘의 공부)":
     st.subheader(f"📅 {today.strftime('%Y-%m-%d')}")
     
@@ -101,12 +174,45 @@ if mode == "Daily View (오늘의 공부)":
     st.session_state.wakeup_checked = is_wakeup 
     st.divider()
 
-    st.markdown("##### ➕ 타임테이블 추가")
+    # [추가] 즐겨찾기 즉시 추가
+    st.markdown("##### 🚀 즐겨찾는 루틴 즉시 추가")
+    if st.session_state.favorite_tasks:
+        fav_options = [f"{f['plan_time']} - {f['task']}" for f in st.session_state.favorite_tasks]
+        
+        col_fav1, col_fav2 = st.columns([4, 1])
+        with col_fav1:
+            selected_fav_option = st.selectbox("등록된 루틴 선택", options=fav_options, label_visibility="collapsed")
+        
+        with col_fav2:
+            if st.button("추가", use_container_width=True, key="add_fav_btn"):
+                time_str, task_str = selected_fav_option.split(" - ", 1)
+                
+                # 중복 검사
+                if not any(t['plan_time'] == time_str and t['task'] == task_str for t in st.session_state.tasks):
+                    st.session_state.tasks.append({
+                        "plan_time": time_str,
+                        "task": task_str,
+                        "accumulated": 0,
+                        "last_start": None,
+                        "is_running": False,
+                        "alert_sent": False
+                    })
+                    st.rerun()
+                else:
+                    st.warning("이미 오늘의 타임테이블에 있는 할 일입니다.")
+    else:
+        st.info("등록된 즐겨찾는 루틴이 없습니다. 설정창에서 추가하세요.")
+        
+    st.markdown("---")
+
+    # 2. 할 일 추가 (타임테이블 방식 - 기존)
+    st.markdown("##### ➕ 수동으로 타임테이블 추가")
+    
     col_input1, col_input2, col_btn = st.columns([1, 3, 1], vertical_alignment="bottom")
     with col_input1:
-        plan_time = st.time_input("시작 시간", value=datetime.time(9, 0))
+        plan_time = st.time_input("시작 시간", value=datetime.time(9, 0), key="manual_time")
     with col_input2:
-        new_task = st.text_input("학습할 과목/내용", placeholder="예: 재무회계 기출풀이")
+        new_task = st.text_input("학습할 과목/내용", placeholder="예: 재무회계 기출풀이", key="manual_task")
     with col_btn:
         if st.button("추가하기", use_container_width=True, type="primary"):
             if new_task:
@@ -121,13 +227,18 @@ if mode == "Daily View (오늘의 공부)":
                 st.rerun()
 
     st.markdown("---")
+
+    # 3. 리스트 출력
     st.session_state.tasks.sort(key=lambda x: x['plan_time'])
 
     total_seconds = 0
+    
     for idx, task in enumerate(st.session_state.tasks):
         c1, c2, c3, c4 = st.columns([1, 3, 2, 0.5], vertical_alignment="center")
+        
         with c1: st.markdown(f"**⏰ {task['plan_time']}**")
         with c2: st.markdown(f"{task['task']}")
+
         with c3:
             current_duration = task['accumulated']
             if task['is_running']: current_duration += time.time() - task['last_start']
@@ -146,6 +257,7 @@ if mode == "Daily View (오늘의 공부)":
                         task['is_running'] = True
                         task['last_start'] = time.time()
                         st.rerun()
+
         with c4:
             if st.button("🗑️", key=f"del_{idx}"):
                 del st.session_state.tasks[idx]
@@ -155,6 +267,8 @@ if mode == "Daily View (오늘의 공부)":
         else: total_seconds += task['accumulated']
 
     st.divider()
+
+    # 4. 하루 마무리
     st.session_state.target_time = st.number_input("오늘 목표(시간)", min_value=1.0, value=st.session_state.target_time, step=0.5)
     total_hours = total_seconds / 3600
     status = get_status_color(total_hours, st.session_state.target_time)
@@ -170,6 +284,9 @@ if mode == "Daily View (오늘의 공부)":
         else:
             st.error("저장 실패.")
 
+# ---------------------------------------------------------
+# [모드 2] 월간 뷰
+# ---------------------------------------------------------
 else:
     st.subheader("🗓️ 월간 기록 대시보드")
     try:
@@ -189,3 +306,4 @@ else:
             else: st.info("아직 저장된 기록이 없습니다.")
         else: st.warning("구글 시트 연동 설정(Secrets)이 필요합니다.")
     except Exception as e: st.warning(f"데이터 로드 중 오류: {e}")
+
