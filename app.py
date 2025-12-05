@@ -17,7 +17,6 @@ NON_STUDY_TASKS = [
 
 # --- 2. 헬퍼 함수 ---
 def get_gspread_client():
-    """Google Sheet 클라이언트 객체를 반환합니다."""
     if "gcp_service_account" not in st.secrets:
         return None
     scope = ['https://spreadsheets.google.com/feeds', 'https://www.googleapis.com/auth/drive']
@@ -27,7 +26,6 @@ def get_gspread_client():
     return client
 
 def get_default_tasks():
-    """새로운 날에 자동으로 로드될 고정 루틴을 정의합니다."""
     return [
         {"plan_time": "08:00", "task": "아침 백지 복습", "accumulated": 0, "last_start": None, "is_running": False},
         {"plan_time": "13:00", "task": "점심 식사 및 신체 유지 (운동)", "accumulated": 0, "last_start": None, "is_running": False},
@@ -63,10 +61,9 @@ def save_to_google_sheets(date, total_seconds, status, wakeup_success, tasks, ta
 
 def load_persistent_data():
     client = get_gspread_client()
-    # [수정] 21시 즐겨찾기 이름 수정 반영
     default_favorites = [
-        {"plan_time": "09:00", "task": "오전 학습 세션", "key": "09:00_오전 학습 세션"},
-        {"plan_time": "15:00", "task": "오후 학습 세션", "key": "15:00_오후 학습 세션션"}
+        {"plan_time": "08:00", "task": "아침 백지 복습", "key": "08:00_아침 백지 복습"},
+        {"plan_time": "21:00", "task": "당일 학습 백지 복습", "key": "21:00_당일 학습 백지 복습"}
     ]
     if client is None: return get_default_tasks(), 10.0, datetime.date(2026, 5, 1), default_favorites, ""
 
@@ -120,7 +117,6 @@ def load_persistent_data():
             if is_today_loaded:
                 daily_reflection = last_record.get('Daily_Reflection', "")
 
-
         return tasks, target_time, d_day_date, favorites, daily_reflection
 
     except Exception as e:
@@ -138,27 +134,19 @@ def get_status_color(achieved, target):
     elif ratio >= 50: return "🟡 Normal"
     else: return "🔴 Bad"
 
-# --- 3. 세션 및 데이터 초기화 (앱 시작 시 데이터 로드) ---
+# --- 3. 세션 및 데이터 초기화 ---
 initial_tasks, initial_target_time, initial_d_day_date, initial_favorites, initial_reflection = load_persistent_data()
 
-if 'tasks' not in st.session_state:
-    st.session_state.tasks = initial_tasks 
-if 'target_time' not in st.session_state:
-    st.session_state.target_time = initial_target_time
-if 'd_day_date' not in st.session_state:
-    st.session_state.d_day_date = initial_d_day_date
-if 'favorite_tasks' not in st.session_state:
-    st.session_state.favorite_tasks = initial_favorites
-if 'daily_reflection' not in st.session_state:
-    st.session_state.daily_reflection = initial_reflection
-
+if 'tasks' not in st.session_state: st.session_state.tasks = initial_tasks 
+if 'target_time' not in st.session_state: st.session_state.target_time = initial_target_time
+if 'd_day_date' not in st.session_state: st.session_state.d_day_date = initial_d_day_date
+if 'favorite_tasks' not in st.session_state: st.session_state.favorite_tasks = initial_favorites
+if 'daily_reflection' not in st.session_state: st.session_state.daily_reflection = initial_reflection
 if 'wakeup_checked' not in st.session_state:
-    if initial_reflection and "7시 기상 성공" in initial_reflection:
-         st.session_state.wakeup_checked = True 
-    else:
-        st.session_state.wakeup_checked = False
+    if initial_reflection and "7시 기상 성공" in initial_reflection: st.session_state.wakeup_checked = True 
+    else: st.session_state.wakeup_checked = False
     
-# --- 4. 사이드바 (설정 & 즐겨찾기 관리) ---
+# --- 4. 사이드바 (설정 & 사운드 & 루틴) ---
 with st.sidebar:
     st.header("⚙️ 설정")
     
@@ -170,25 +158,35 @@ with st.sidebar:
 
     st.markdown("---") 
     
-    st.subheader("⭐️ 즐겨찾는 루틴 관리")
+    # [추가] 몰입 사운드 엔진
+    st.subheader("🎧 몰입 사운드 (Focus Sound)")
+    sound_option = st.selectbox("사운드 선택", ["선택 안 함", "빗소리 (Rain)", "카페 소음 (Cafe)", "알파파 (Alpha Waves)"])
     
+    if sound_option == "빗소리 (Rain)":
+        st.audio("https://cdn.pixabay.com/download/audio/2022/07/04/audio_14e5b9f7a7.mp3", format="audio/mp3", loop=True)
+        st.caption("☔ 차분한 빗소리로 잡념을 씻어냅니다.")
+    elif sound_option == "카페 소음 (Cafe)":
+        st.audio("https://cdn.pixabay.com/download/audio/2021/08/09/audio_88447e769f.mp3", format="audio/mp3", loop=True)
+        st.caption("☕ 적당한 소음이 집중력을 높입니다.")
+    elif sound_option == "알파파 (Alpha Waves)":
+        # 432Hz 딥 포커스 사운드 (샘플)
+        st.audio("https://cdn.pixabay.com/download/audio/2022/03/09/audio_c8c8a73467.mp3", format="audio/mp3", loop=True)
+        st.caption("🧠 뇌파를 안정시켜 학습 효율을 극대화합니다.")
+
+    st.markdown("---") 
+    
+    st.subheader("⭐️ 즐겨찾는 루틴 관리")
     with st.form("favorite_form", clear_on_submit=True):
         fav_time = st.time_input("루틴 시간", value=datetime.time(9, 0), key="fav_time")
         fav_task = st.text_input("루틴 내용", placeholder="예: 백지 복습", key="fav_task")
         submitted = st.form_submit_button("즐겨찾기 추가")
-        
         if submitted and fav_task:
-            new_fav = {
-                "plan_time": fav_time.strftime("%H:%M"), 
-                "task": fav_task, 
-                "key": f"{fav_time.strftime('%H:%M')}_{fav_task}"
-            }
+            new_fav = {"plan_time": fav_time.strftime("%H:%M"), "task": fav_task, "key": f"{fav_time.strftime('%H:%M')}_{fav_task}"}
             if new_fav not in st.session_state.favorite_tasks:
                 st.session_state.favorite_tasks.append(new_fav)
                 st.session_state.favorite_tasks.sort(key=lambda x: x['plan_time'])
-                st.success("루틴이 추가되었습니다!")
-            else:
-                st.warning("이미 등록된 루틴입니다.")
+                st.success("추가됨!")
+                st.rerun()
 
     if st.session_state.favorite_tasks:
         fav_options = [f"{f['plan_time']} - {f['task']}" for f in st.session_state.favorite_tasks]
@@ -197,11 +195,7 @@ with st.sidebar:
             if fav_to_delete:
                 keys_to_delete = [opt.split(" - ", 1) for opt in fav_to_delete]
                 keys_to_delete = [f"{k[0]}_{k[1]}" for k in keys_to_delete]
-                
-                st.session_state.favorite_tasks = [
-                    f for f in st.session_state.favorite_tasks if f['key'] not in keys_to_delete
-                ]
-                st.success("루틴이 삭제되었습니다.")
+                st.session_state.favorite_tasks = [f for f in st.session_state.favorite_tasks if f['key'] not in keys_to_delete]
                 st.rerun()
 
 # --- 5. 메인 UI ---
@@ -226,15 +220,12 @@ if mode == "Daily View (오늘의 공부)":
     st.markdown("##### 🚀 즐겨찾는 루틴 즉시 추가")
     if st.session_state.favorite_tasks:
         fav_options = [f"{f['plan_time']} - {f['task']}" for f in st.session_state.favorite_tasks]
-        
         col_fav1, col_fav2 = st.columns([4, 1])
         with col_fav1:
             selected_fav_option = st.selectbox("등록된 루틴 선택", options=fav_options, label_visibility="collapsed")
-        
         with col_fav2:
             if st.button("추가", use_container_width=True, key="add_fav_btn"):
                 time_str, task_str = selected_fav_option.split(" - ", 1)
-                
                 if not any(t['plan_time'] == time_str and t['task'] == task_str for t in st.session_state.tasks):
                     st.session_state.tasks.append({
                         "plan_time": time_str,
@@ -244,8 +235,8 @@ if mode == "Daily View (오늘의 공부)":
                         "is_running": False
                     })
                     st.rerun()
-                else: st.warning("이미 오늘의 타임테이블에 있는 할 일입니다.")
-    else: st.info("등록된 즐겨찾는 루틴이 없습니다. 설정창에서 추가하세요.")
+                else: st.warning("이미 등록된 할 일입니다.")
+    else: st.info("등록된 즐겨찾는 루틴이 없습니다.")
         
     st.markdown("---")
 
@@ -269,22 +260,14 @@ if mode == "Daily View (오늘의 공부)":
 
     st.markdown("---")
 
-    # 3. 리스트 출력 (타임테이블)
+    # 리스트 출력
     st.session_state.tasks.sort(key=lambda x: x['plan_time'])
-
     total_seconds = 0
-    
-    NON_STUDY_TASKS = [
-        "점심 식사 및 신체 유지 (운동)", 
-        "저녁 식사 및 익일 식사 준비"
-    ]
     
     for idx, task in enumerate(st.session_state.tasks):
         c1, c2, c3, c4 = st.columns([1, 3, 2, 0.5], vertical_alignment="center")
-        
         with c1: st.markdown(f"**⏰ {task['plan_time']}**")
         with c2: st.markdown(f"{task['task']}")
-
         with c3:
             current_duration = task['accumulated']
             if task['is_running']: current_duration += time.time() - task['last_start']
@@ -303,7 +286,6 @@ if mode == "Daily View (오늘의 공부)":
                         task['is_running'] = True
                         task['last_start'] = time.time()
                         st.rerun()
-
         with c4:
             if st.button("🗑️", key=f"del_{idx}"):
                 del st.session_state.tasks[idx]
@@ -315,7 +297,7 @@ if mode == "Daily View (오늘의 공부)":
 
     st.divider()
 
-    # 4. 하루 마무리
+    # 하루 마무리
     new_target_time = st.number_input("오늘 목표(시간)", min_value=1.0, value=st.session_state.target_time, step=0.5)
     if new_target_time != st.session_state.target_time:
         st.session_state.target_time = new_target_time
@@ -329,29 +311,12 @@ if mode == "Daily View (오늘의 공부)":
     m3.metric("오늘의 평가", status)
     
     st.markdown("##### 📝 오늘의 성과 정리 (백지 복습 결과 포함)")
-    new_reflection = st.text_area(
-        "오늘의 학습 성과와 느낀 점을 자유롭게 기록해 주세요. (가장 효과적인 백지 복습 내용이나, 집중이 잘 안된 이유 등)",
-        value=st.session_state.daily_reflection, 
-        height=150,
-        key="reflection_input"
-    )
-    if new_reflection != st.session_state.daily_reflection:
-        st.session_state.daily_reflection = new_reflection
-
+    new_reflection = st.text_area("오늘의 학습 성과와 느낀 점을 기록해 주세요.", value=st.session_state.daily_reflection, height=150, key="reflection_input")
+    if new_reflection != st.session_state.daily_reflection: st.session_state.daily_reflection = new_reflection
 
     if st.button("💾 구글 시트에 기록 저장하기", type="primary", use_container_width=True):
-        if save_to_google_sheets(
-            today, 
-            total_seconds, 
-            status, 
-            st.session_state.wakeup_checked, 
-            st.session_state.tasks,
-            st.session_state.target_time, 
-            st.session_state.d_day_date,
-            st.session_state.favorite_tasks,
-            st.session_state.daily_reflection
-        ):
-            st.success("✅ 모든 기록(일기 포함)이 영구 저장되었습니다!")
+        if save_to_google_sheets(today, total_seconds, status, st.session_state.wakeup_checked, st.session_state.tasks, st.session_state.target_time, st.session_state.d_day_date, st.session_state.favorite_tasks, st.session_state.daily_reflection):
+            st.success("✅ 저장 완료!")
         else: st.error("저장 실패.")
 
 # ---------------------------------------------------------
@@ -363,25 +328,15 @@ else:
         client = get_gspread_client()
         if client and "gcp_service_account" in st.secrets:
             sheet = client.open("CTA_Study_Data").sheet1
-            
             records = sheet.get_all_records()
             if records:
                 df = pd.DataFrame(records)
-                
-                # 1. 날짜 기준으로 그룹화하고 가장 최근 기록(last)만 필터링
-                # df_latest는 각 날짜의 유일한 최신 행을 담고 있음
                 df_latest = df.groupby('날짜').last().reset_index()
-
-                # 2. 표시할 컬럼 정의 (JSON/세팅값은 제외하고 Daily_Reflection은 포함)
                 columns_to_display = [col for col in df_latest.columns if col not in ['Tasks_JSON', 'Target_Time', 'DDay_Date', 'Favorites_JSON']]
-                
                 st.dataframe(df_latest[columns_to_display], use_container_width=True)
-                
                 if '기상성공여부' in df_latest.columns:
-                    # [수정] 누적 기록 일수도 필터링된 데이터프레임 (df_latest) 기반으로 계산
                     success_count = len(df_latest[df_latest['기상성공여부'] == '성공'])
                     st.info(f"누적 기록: {len(df_latest)}일 | 기상 성공 횟수: {success_count}회")
             else: st.info("아직 저장된 기록이 없습니다.")
         else: st.warning("구글 시트 연동 설정(Secrets)이 필요합니다.")
     except Exception as e: st.warning(f"데이터 로드 중 오류: {e}")
-
