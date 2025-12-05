@@ -141,10 +141,16 @@ if 'tasks' not in st.session_state: st.session_state.tasks = get_default_tasks()
 if 'inbox_items' not in st.session_state: st.session_state.inbox_items = []
 if 'telegram_id' not in st.session_state: st.session_state.telegram_id = ""
 
+# [신규] 멀티 목표 관리 세션
+if 'project_goals' not in st.session_state:
+    st.session_state.project_goals = [
+        {"category": "CTA 공부", "name": "1차 시험", "date": datetime.date(2026, 4, 25)}
+    ]
 
-# --- 4. 사이드바 (네비게이션 및 설정) ---
 
-# [신규] Inbox(할일 보관함) 모달 팝업
+# --- 4. 사이드바 및 팝업 기능 정의 ---
+
+# [팝업 1] Inbox 추가 모달
 @st.dialog("📥 Inbox (생각 보관함)")
 def show_inbox_modal():
     st.write("떠오르는 아이디어나 나중에 할 일을 기록해두세요.")
@@ -169,6 +175,41 @@ def show_inbox_modal():
             st.toast(f"✅ Inbox에 저장됨: {task_name}")
             st.rerun()
 
+# [팝업 2] 목표(D-Day) 관리 모달
+@st.dialog("🎯 목표(D-Day) 관리")
+def show_goal_manager():
+    st.write("프로젝트별 주요 목표일을 관리하세요.")
+    
+    # 기존 목표 리스트 출력
+    if st.session_state.project_goals:
+        for i, goal in enumerate(st.session_state.project_goals):
+            c1, c2, c3 = st.columns([2, 2, 1], vertical_alignment="center")
+            c1.markdown(f"**[{goal['category']}]**")
+            c2.write(f"{goal['name']} ({goal['date']})")
+            if c3.button("삭제", key=f"del_goal_{i}"):
+                del st.session_state.project_goals[i]
+                st.rerun()
+    else:
+        st.info("등록된 목표가 없습니다.")
+
+    st.markdown("---")
+    st.write("###### ➕ 새 목표 추가")
+    with st.form("add_goal_form", clear_on_submit=True):
+        c1, c2 = st.columns(2)
+        cat = c1.selectbox("카테고리", PROJECT_CATEGORIES, key="goal_cat")
+        name = c2.text_input("목표명 (예: 2차 시험)", key="goal_name")
+        d_date = st.date_input("목표 날짜", key="goal_date")
+        
+        if st.form_submit_button("목표 등록"):
+            st.session_state.project_goals.append({
+                "category": cat,
+                "name": name,
+                "date": d_date
+            })
+            # 날짜순 정렬
+            st.session_state.project_goals.sort(key=lambda x: x['date'])
+            st.rerun()
+
 # [기능] 저장 로직 분리
 def perform_save(target_mode=None):
     cur_total = 0
@@ -180,9 +221,14 @@ def perform_save(target_mode=None):
     cur_hours = cur_total / 3600
     cur_status = get_status_color(cur_hours, st.session_state.target_time)
     
+    # 메인 D-day 계산 (가장 가까운 미래 목표)
+    today = datetime.date.today()
+    future_goals = [g for g in st.session_state.project_goals if g['date'] >= today]
+    main_d_day = future_goals[0]['date'] if future_goals else today
+
     success = save_to_google_sheets(
         st.session_state.selected_date, cur_total, cur_status, st.session_state.wakeup_checked, 
-        st.session_state.tasks, st.session_state.target_time, st.session_state.d_day_date, 
+        st.session_state.tasks, st.session_state.target_time, main_d_day, 
         st.session_state.favorite_tasks, st.session_state.daily_reflection
     )
     if success:
@@ -193,7 +239,7 @@ def perform_save(target_mode=None):
             st.rerun()
     else: st.error("저장 실패")
 
-# [기능] 모달 팝업창 정의
+# [팝업 3] 페이지 이동 확인 모달
 @st.dialog("페이지 이동 확인")
 def confirm_navigation_modal(target_mode):
     st.write("저장하지 않은 내용은 사라집니다.")
@@ -209,6 +255,7 @@ def confirm_navigation_modal(target_mode):
     with col3:
         if st.button("취소", use_container_width=True):
             st.rerun()
+
 
 # [사이드바 UI]
 with st.sidebar:
@@ -555,5 +602,6 @@ with chat_col:
             st.markdown(response)
         st.session_state.messages.append({"role": "assistant", "content": response})
         st.rerun()
+
 
 
