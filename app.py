@@ -9,16 +9,11 @@ from oauth2client.service_account import ServiceAccountCredentials
 # --- 1. 앱 기본 설정 ---
 st.set_page_config(page_title="CTA 합격 메이커", page_icon="📝", layout="wide")
 
-# [추가] 고정된 디폴트 루틴 정의 헬퍼 함수
-def get_default_tasks():
-    """새로운 날에 자동으로 로드될 고정 루틴을 정의합니다."""
-    return [
-        {"plan_time": "08:00", "task": "아침 백지 복습", "accumulated": 0, "last_start": None, "is_running": False},
-        {"plan_time": "13:00", "task": "점심 식사 및 신체 유지 (운동)", "accumulated": 0, "last_start": None, "is_running": False},
-        {"plan_time": "19:00", "task": "저녁 식사 및 익일 식사 준비", "accumulated": 0, "last_start": None, "is_running": False},
-        {"plan_time": "21:00", "task": "저녁 백지 복습/정리", "accumulated": 0, "last_start": None, "is_running": False},
-    ]
-
+# [추가] 순공 시간에서 제외할 활동 리스트 정의
+NON_STUDY_TASKS = [
+    "점심 식사 및 신체 유지 (운동)", 
+    "저녁 식사 및 익일 식사 준비"
+]
 
 # --- 2. 헬퍼 함수 ---
 def get_gspread_client():
@@ -30,6 +25,15 @@ def get_gspread_client():
     creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
     client = gspread.authorize(creds)
     return client
+
+def get_default_tasks():
+    """새로운 날에 자동으로 로드될 고정 루틴을 정의합니다."""
+    return [
+        {"plan_time": "08:00", "task": "아침 백지 복습", "accumulated": 0, "last_start": None, "is_running": False},
+        {"plan_time": "13:00", "task": "점심 식사 및 신체 유지 (운동)", "accumulated": 0, "last_start": None, "is_running": False},
+        {"plan_time": "19:00", "task": "저녁 식사 및 익일 식사 준비", "accumulated": 0, "last_start": None, "is_running": False},
+        {"plan_time": "21:00", "task": "저녁 백지 복습/정리", "accumulated": 0, "last_start": None, "is_running": False},
+    ]
 
 def save_to_google_sheets(date, total_seconds, status, wakeup_success, tasks, target_time, d_day_date, favorite_tasks, daily_reflection):
     try:
@@ -57,23 +61,20 @@ def save_to_google_sheets(date, total_seconds, status, wakeup_success, tasks, ta
         st.error(f"저장 실패: {e}")
         return False
 
-# [수정] load_persistent_data 함수: tasks 로드 로직 수정
 def load_persistent_data():
     client = get_gspread_client()
-    if client is None: return get_default_tasks(), 10.0, datetime.date(2026, 5, 1), [], ""
+    default_favorites = [
+        {"plan_time": "08:00", "task": "전일 복습 (백지)", "key": "08:00_전일 복습 (백지)"},
+        {"plan_time": "21:00", "task": "백지 복습", "key": "21:00_백지 복습"}
+    ]
+    if client is None: return get_default_tasks(), 10.0, datetime.date(2026, 5, 1), default_favorites, ""
 
     try:
         sheet = client.open("CTA_Study_Data").sheet1 
         records = sheet.get_all_records()
-        
         default_d_day = datetime.date(2026, 5, 1)
-        default_favorites = [
-            {"plan_time": "08:00", "task": "전일 복습 (백지)", "key": "08:00_전일 복습 (백지)"},
-            {"plan_time": "21:00", "task": "세법학 암기", "key": "21:00_세법학 암기"}
-        ]
         
-        # 기본값 설정
-        tasks = get_default_tasks() # 기본적으로 고정 루틴을 세팅
+        tasks = get_default_tasks()
         is_today_loaded = False
         target_time = 10.0
         d_day_date = default_d_day
@@ -85,21 +86,16 @@ def load_persistent_data():
             last_record = df.iloc[-1]
             today_date_str = datetime.date.today().strftime('%Y-%m-%d')
             
-            # 오늘 기록이 있는지 확인
             if last_record.get('날짜') == today_date_str:
                 is_today_loaded = True
-                
-                # 1. Tasks 로드 (오늘 기록이 있으면, 고정 루틴 대신 저장된 Tasks 로드)
                 if last_record.get('Tasks_JSON'):
                      tasks = json.loads(last_record['Tasks_JSON'])
                      for task in tasks:
                         task['is_running'] = False 
                         task['last_start'] = None
-                # 오늘 기록이 있지만 Tasks_JSON이 빈 값이면, tasks는 빈 리스트가 됨 (사용자가 수동으로 모두 지우고 저장했을 경우를 존중)
                 else:
                     tasks = [] 
             
-            # 2. Settings 로드 (Target Time, D-Day)
             target_time_raw = last_record.get('Target_Time', 10.0) 
             try:
                 target_time = float(target_time_raw)
@@ -114,14 +110,12 @@ def load_persistent_data():
                 except ValueError:
                     d_day_date = default_d_day
 
-            # 3. Favorites 로드
             if last_record.get('Favorites_JSON'):
                 try:
                     favorites = json.loads(last_record['Favorites_JSON'])
                 except:
                     pass
             
-            # 4. Reflection 로드 (오늘 날짜 기록이 있다면)
             if is_today_loaded:
                 daily_reflection = last_record.get('Daily_Reflection', "")
 
@@ -129,8 +123,6 @@ def load_persistent_data():
         return tasks, target_time, d_day_date, favorites, daily_reflection
 
     except Exception as e:
-        # st.warning(f"데이터 로드 중 오류: {e}") 
-        # 로드 실패 시에도 고정 루틴 포함 기본값 반환
         return get_default_tasks(), 10.0, datetime.date(2026, 5, 1), default_favorites, ""
 
 def format_time(seconds):
@@ -158,7 +150,6 @@ if 'favorite_tasks' not in st.session_state:
     st.session_state.favorite_tasks = initial_favorites
 if 'daily_reflection' not in st.session_state:
     st.session_state.daily_reflection = initial_reflection
-
 
 if 'wakeup_checked' not in st.session_state:
     if initial_reflection and "7시 기상 성공" in initial_reflection:
@@ -282,6 +273,12 @@ if mode == "Daily View (오늘의 공부)":
 
     total_seconds = 0
     
+    # [수정] 순공 시간에서 제외할 활동 리스트 정의
+    NON_STUDY_TASKS = [
+        "점심 식사 및 신체 유지 (운동)", 
+        "저녁 식사 및 익일 식사 준비"
+    ]
+    
     for idx, task in enumerate(st.session_state.tasks):
         c1, c2, c3, c4 = st.columns([1, 3, 2, 0.5], vertical_alignment="center")
         
@@ -312,12 +309,14 @@ if mode == "Daily View (오늘의 공부)":
                 del st.session_state.tasks[idx]
                 st.rerun()
         
-        if task['is_running']: total_seconds += (task['accumulated'] + (time.time() - task['last_start']))
-        else: total_seconds += task['accumulated']
+        # [수정] 순공 시간 합산 로직 (NON_STUDY_TASKS 제외)
+        if task['task'] not in NON_STUDY_TASKS:
+            if task['is_running']: total_seconds += (task['accumulated'] + (time.time() - task['last_start']))
+            else: total_seconds += task['accumulated']
 
     st.divider()
 
-    # 4. 하루 마무리 & 일기
+    # 4. 하루 마무리
     new_target_time = st.number_input("오늘 목표(시간)", min_value=1.0, value=st.session_state.target_time, step=0.5)
     if new_target_time != st.session_state.target_time:
         st.session_state.target_time = new_target_time
