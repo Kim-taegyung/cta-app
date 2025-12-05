@@ -293,3 +293,96 @@ if mode == "Daily View (오늘의 공부)":
     with col_input2:
         new_task = st.text_input("학습할 과목/내용", placeholder="예: 재무회계 기출풀이", key="manual_time")
     with col_btn:
+        if st.button("추가하기", use_container_width=True, type="primary"):
+            if new_task:
+                st.session_state.tasks.append({
+                    "plan_time": plan_time.strftime("%H:%M"),
+                    "task": new_task,
+                    "accumulated": 0,
+                    "last_start": None,
+                    "is_running": False
+                })
+                st.rerun()
+
+    st.markdown("---")
+
+    # 리스트 출력
+    st.session_state.tasks.sort(key=lambda x: x['plan_time'])
+    total_seconds = 0
+    
+    for idx, task in enumerate(st.session_state.tasks):
+        c1, c2, c3, c4 = st.columns([1, 3, 2, 0.5], vertical_alignment="center")
+        with c1: st.markdown(f"**⏰ {task['plan_time']}**")
+        with c2: st.markdown(f"{task['task']}")
+        with c3:
+            current_duration = task['accumulated']
+            if task['is_running']: current_duration += time.time() - task['last_start']
+            
+            t_col1, t_col2 = st.columns([2, 1])
+            with t_col1: st.markdown(f"⏱️ `{format_time(current_duration)}`")
+            with t_col2:
+                if task['is_running']:
+                    if st.button("⏹️", key=f"stop_{idx}"):
+                        task['accumulated'] += time.time() - task['last_start']
+                        task['is_running'] = False
+                        task['last_start'] = None
+                        st.rerun()
+                else:
+                    if st.button("▶️", key=f"start_{idx}"):
+                        task['is_running'] = True
+                        task['last_start'] = time.time()
+                        st.rerun()
+        with c4:
+            if st.button("🗑️", key=f"del_{idx}"):
+                del st.session_state.tasks[idx]
+                st.rerun()
+        
+        if task['task'] not in NON_STUDY_TASKS:
+            if task['is_running']: total_seconds += (task['accumulated'] + (time.time() - task['last_start']))
+            else: total_seconds += task['accumulated']
+
+    st.divider()
+
+    # 하루 마무리
+    new_target_time = st.number_input("오늘 목표(시간)", min_value=1.0, value=st.session_state.target_time, step=0.5)
+    if new_target_time != st.session_state.target_time:
+        st.session_state.target_time = new_target_time
+    
+    total_hours = total_seconds / 3600
+    status = get_status_color(total_hours, st.session_state.target_time)
+
+    m1, m2, m3 = st.columns(3)
+    m1.metric("총 순공 시간", format_time(total_seconds))
+    m2.metric("목표 달성률", f"{(total_hours / st.session_state.target_time)*100:.1f}%")
+    m3.metric("오늘의 평가", status)
+    
+    st.markdown("##### 📝 오늘의 학습 성과 정리 (백지 복습 결과 포함)")
+    new_reflection = st.text_area("오늘의 학습 성과와 느낀 점을 기록해 주세요.", value=st.session_state.daily_reflection, height=150, key="reflection_input")
+    if new_reflection != st.session_state.daily_reflection: st.session_state.daily_reflection = new_reflection
+
+    if st.button("💾 구글 시트에 기록 저장하기", type="primary", use_container_width=True):
+        if save_to_google_sheets(today, total_seconds, status, st.session_state.wakeup_checked, st.session_state.tasks, st.session_state.target_time, st.session_state.d_day_date, st.session_state.favorite_tasks, st.session_state.daily_reflection):
+            st.success("✅ 저장 완료!")
+        else: st.error("저장 실패.")
+
+# ---------------------------------------------------------
+# [모드 2] 월간 뷰
+# ---------------------------------------------------------
+else:
+    st.subheader("🗓️ 월간 기록 대시보드")
+    try:
+        client = get_gspread_client()
+        if client and "gcp_service_account" in st.secrets:
+            sheet = client.open("CTA_Study_Data").sheet1
+            records = sheet.get_all_records()
+            if records:
+                df = pd.DataFrame(records)
+                df_latest = df.groupby('날짜').last().reset_index()
+                columns_to_display = [col for col in df_latest.columns if col not in ['Tasks_JSON', 'Target_Time', 'DDay_Date', 'Favorites_JSON']]
+                st.dataframe(df_latest[columns_to_display], use_container_width=True)
+                if '기상성공여부' in df_latest.columns:
+                    success_count = len(df_latest[df_latest['기상성공여부'] == '성공'])
+                    st.info(f"누적 기록: {len(df_latest)}일 | 기상 성공 횟수: {success_count}회")
+            else: st.info("아직 저장된 기록이 없습니다.")
+        else: st.warning("구글 시트 연동 설정(Secrets)이 필요합니다.")
+    except Exception as e: st.warning(f"데이터 로드 중 오류: {e}")
