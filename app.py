@@ -27,7 +27,7 @@ PROJECT_CATEGORIES = ["CTA 공부", "업무/사업", "건강/운동", "기타/�
 CATEGORY_COLORS = {"CTA 공부": "blue", "업무/사업": "orange", "건강/운동": "green", "기타/생활": "gray"}
 
 # ---------------------------------------------------------
-# 2. 헬퍼 함수 (DB 및 데이터 처리)
+# 2. 헬퍼 함수
 # ---------------------------------------------------------
 @st.cache_resource(ttl=3600)
 def get_gspread_client():
@@ -39,6 +39,7 @@ def get_gspread_client():
     return client
 
 def get_default_tasks():
+    # 기본 템플릿 (카테고리 정확히 명시)
     return [
         {"plan_time": "08:00", "category": "CTA 공부", "task": "아침 백지 복습", "accumulated": 0, "last_start": None, "is_running": False},
         {"plan_time": "13:00", "category": "건강/운동", "task": "점심 식사 및 신체 유지 (운동)", "accumulated": 0, "last_start": None, "is_running": False},
@@ -46,13 +47,12 @@ def get_default_tasks():
         {"plan_time": "21:00", "category": "CTA 공부", "task": "당일 학습 백지 복습", "accumulated": 0, "last_start": None, "is_running": False},
     ]
 
-# [신규] 설정 데이터(Settings) 개별 저장 함수
+# [설정 저장]
 def update_setting(key, value):
     try:
         client = get_gspread_client()
         if client is None: return False
         
-        # 'Settings' 시트 열기 (없으면 생성)
         try:
             sheet = client.open("CTA_Study_Data").worksheet("Settings")
         except:
@@ -61,7 +61,6 @@ def update_setting(key, value):
                 sheet.append_row(["Key", "Value"])
             except: return False
 
-        # JSON 직렬화 전 데이터 가공 (Date 객체 -> 문자열)
         if key == "project_goals":
             value_to_save = []
             for item in value:
@@ -73,19 +72,15 @@ def update_setting(key, value):
         else:
             json_val = json.dumps(value, ensure_ascii=False)
         
-        # 시트에서 Key 검색 및 업데이트
         try:
             cell = sheet.find(key)
             sheet.update_cell(cell.row, 2, json_val)
         except gspread.exceptions.CellNotFound:
             sheet.append_row([key, json_val])
-            
         return True
-    except Exception as e:
-        # print(f"설정 저장 실패: {e}") # 디버깅용
-        return False
+    except Exception: return False
 
-# [신규] 설정 데이터 로드 함수
+# [설정 로드]
 def load_settings():
     default_settings = {
         "telegram_id": "",
@@ -100,10 +95,8 @@ def load_settings():
         client = get_gspread_client()
         if client is None: return default_settings
         
-        try:
-            sheet = client.open("CTA_Study_Data").worksheet("Settings")
-        except:
-            return default_settings
+        try: sheet = client.open("CTA_Study_Data").worksheet("Settings")
+        except: return default_settings
 
         records = sheet.get_all_records()
         for row in records:
@@ -112,7 +105,6 @@ def load_settings():
             if k in default_settings and v:
                 try:
                     loaded_val = json.loads(v)
-                    # 날짜 객체 복원
                     if k == 'project_goals':
                         for g in loaded_val:
                             if isinstance(g.get('date'), str):
@@ -120,10 +112,9 @@ def load_settings():
                     default_settings[k] = loaded_val
                 except: pass
         return default_settings
-    except:
-        return default_settings
+    except: return default_settings
 
-# [기존] 데일리 로그 저장
+# [데일리 로그 저장]
 def save_to_google_sheets(date, total_seconds, status, wakeup_success, tasks, target_time, d_day_date, favorite_tasks, daily_reflection):
     try:
         client = get_gspread_client()
@@ -131,7 +122,6 @@ def save_to_google_sheets(date, total_seconds, status, wakeup_success, tasks, ta
         sheet = client.open("CTA_Study_Data").sheet1 
         
         tasks_json = json.dumps(tasks)
-        # favorites_json은 호환성을 위해 저장만 하고 로드하진 않음
         favorites_json = json.dumps(favorite_tasks) 
         
         row = [str(date), round(total_seconds/3600, 2), status, "성공" if wakeup_success else "실패", tasks_json, target_time, str(d_day_date), favorites_json, daily_reflection]
@@ -141,7 +131,7 @@ def save_to_google_sheets(date, total_seconds, status, wakeup_success, tasks, ta
         st.error(f"저장 실패: {e}")
         return False
 
-# [수정됨] 일자별 데이터 로드 (즐겨찾기 분리)
+# [데이터 로드 + 자동 복구 기능]
 def load_data_for_date(target_date):
     client = get_gspread_client()
     data = {
@@ -169,6 +159,15 @@ def load_data_for_date(target_date):
                         for t in loaded_tasks: 
                             t['is_running'] = False
                             t['last_start'] = None
+                            
+                            # [자동 복구 로직] 과거 데이터의 카테고리가 이상하면 내용 기반으로 자동 수정
+                            task_name = t.get('task', '')
+                            if "점심" in task_name or "저녁" in task_name or "운동" in task_name:
+                                if t.get('category') != "건강/운동": t['category'] = "건강/운동"
+                            elif "복습" in task_name or "학습" in task_name:
+                                if t.get('category') == "미지정" or not t.get('category'): 
+                                    t['category'] = "CTA 공부"
+                                    
                         data['tasks'] = loaded_tasks
                     except: pass
                 
@@ -176,9 +175,6 @@ def load_data_for_date(target_date):
                 if last_record.get('기상성공여부') == '성공': data['wakeup_checked'] = True
                 try: data['target_time'] = float(last_record.get('Target_Time', 10.0))
                 except: pass
-                
-                # [중요] favorite_tasks는 Settings에서 관리하므로 여기서 덮어쓰지 않음!
-                
         return data
     except: return data
 
@@ -200,7 +196,7 @@ def go_to_daily(date):
     st.rerun()
 
 # ---------------------------------------------------------
-# 3. 세션 초기화 (DB 연동)
+# 3. 세션 초기화
 # ---------------------------------------------------------
 if 'settings_loaded' not in st.session_state:
     settings = load_settings()
@@ -218,7 +214,7 @@ if 'tasks' not in st.session_state: st.session_state.tasks = get_default_tasks()
 
 
 # ---------------------------------------------------------
-# 4. 팝업(Dialog) 정의
+# 4. 팝업 및 기능
 # ---------------------------------------------------------
 @st.dialog("📥 Inbox 관리", width="large")
 def manage_inbox_modal():
@@ -391,7 +387,7 @@ with st.sidebar:
                 st.rerun()
         
         if st.session_state.favorite_tasks:
-            # 삭제용 리스트
+            # 삭제용 리스트 (안전하게 인덱스 처리)
             fav_del_list = [f"[{t.get('category','-')}] {t['plan_time']} - {t['task']}" for t in st.session_state.favorite_tasks]
             del_target = st.selectbox("삭제할 루틴", ["선택하세요"] + fav_del_list)
             if st.button("선택한 루틴 삭제"):
@@ -527,7 +523,7 @@ with main_col:
                         fav_obj = st.session_state.favorite_tasks[sel_idx]
                         existing_times = [t['plan_time'] for t in st.session_state.tasks]
                         if fav_obj['plan_time'] in existing_times:
-                            st.warning(f"⚠️ {fav_obj['plan_time']} 중복")
+                            st.warning(f"⚠️ {fav_obj['plan_time']}에 이미 일정이 있습니다.")
                         else:
                             st.session_state.tasks.append({
                                 "plan_time": fav_obj['plan_time'], 
