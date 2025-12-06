@@ -478,23 +478,59 @@ with main_col:
                         go_to_daily(curr_date)
 
     # [VIEW 2] Daily View
+# [VIEW 2] Daily View (플래너)
     elif st.session_state.view_mode == "Daily View (플래너)":
         if any(t.get('is_running') for t in st.session_state.tasks):
             st_autorefresh(interval=1000, key="timer_refresh")
 
         sel_date = st.session_state.selected_date
-        
-        # 헤더: 가장 가까운 목표 표시
         today = datetime.date.today()
+        
+        # 1. 미래의 목표들만 추려냄
         future_goals = [g for g in st.session_state.project_goals if g['date'] >= today]
+        
+        # 2. 헤더 텍스트 구성 (가장 급한 것 1개만 강조)
         if future_goals:
             primary_goal = min(future_goals, key=lambda x: x['date'])
             d_day_delta = (primary_goal['date'] - sel_date).days
-            d_str = f"D-{d_day_delta}" if d_day_delta >= 0 else f"D+{-d_day_delta}"
+            
+            if d_day_delta > 0: d_str = f"D-{d_day_delta}"
+            elif d_day_delta == 0: d_str = "D-Day"
+            else: d_str = f"D+{-d_day_delta}" # 과거 날짜 조회 시
+            
             header_text = f"📝 {sel_date.strftime('%Y-%m-%d')} ({primary_goal['name']} {d_str})"
         else:
-            header_text = f"📝 {sel_date.strftime('%Y-%m-%d')} (목표 설정 필요)"
+            header_text = f"📝 {sel_date.strftime('%Y-%m-%d')}"
 
+        curr_utc = datetime.datetime.utcnow()
+        curr_kst = curr_utc + datetime.timedelta(hours=9)
+        today_kst = curr_kst.date()
+        
+        st.title(header_text)
+
+        # [NEW] 3. 목표 현황판 (Metric) 추가
+        # 등록된 목표가 있다면 타이틀 바로 아래에 깔끔하게 보여줍니다.
+        if st.session_state.project_goals:
+            # 최대 4개까지만 가로로 배치 (너무 많으면 줄바꿈 고려 필요)
+            cols = st.columns(len(st.session_state.project_goals))
+            
+            for i, goal in enumerate(st.session_state.project_goals):
+                delta = (goal['date'] - today).days
+                d_label = f"D-{delta}" if delta > 0 else (f"D+{-delta}" if delta < 0 else "D-Day")
+                
+                # delta가 3일 이내면 빨간색 강조, 아니면 일반
+                delta_color = "inverse" if delta <= 3 and delta >= 0 else "normal"
+                
+                with cols[i]:
+                    st.metric(
+                        label=f"[{goal['category']}] {goal['name']}",
+                        value=str(goal['date']),
+                        delta=d_label,
+                        delta_color=delta_color
+                    )
+            st.divider() # 구분선으로 깔끔하게 분리
+
+        # ... (이하 루틴 체크 코드 등 기존 코드 계속) ...
         curr_utc = datetime.datetime.utcnow()
         curr_kst = curr_utc + datetime.timedelta(hours=9)
         today_kst = curr_kst.date()
@@ -683,3 +719,4 @@ with chat_col:
             st.markdown(response)
         st.session_state.messages.append({"role": "assistant", "content": response})
         st.rerun()
+
