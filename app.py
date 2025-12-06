@@ -1,321 +1,477 @@
 import streamlit as st
 import pandas as pd
 import datetime
+import time
+import gspread
+import json
+import uuid
+import calendar
+import random # AI 추천 랜덤성을 위해 추가
+from oauth2client.service_account import ServiceAccountCredentials
+try:
+    from streamlit_autorefresh import st_autorefresh
+except ImportError:
+    def st_autorefresh(interval, key): pass
 
 # ---------------------------------------------------------
-# [설정] 페이지 및 스타일
+# 1. 앱 기본 설정 & 상수
 # ---------------------------------------------------------
-st.set_page_config(page_title="최종 UI 시안 (V3)", page_icon="🎨", layout="wide")
+st.set_page_config(page_title="CTA 합격 메이커 V2", page_icon="🔥", layout="wide")
 
 PROJECT_CATEGORIES = ["CTA 공부", "업무/사업", "건강/운동", "기타/생활"]
 CATEGORY_COLORS = {"CTA 공부": "blue", "업무/사업": "orange", "건강/운동": "green", "기타/생활": "gray"}
+NON_STUDY_CATEGORIES = ["건강/운동", "기타/생활"] 
 
 # ---------------------------------------------------------
-# [팝업 1] 목표(D-Day) 관리
+# 2. DB 연결 및 CRUD 함수
 # ---------------------------------------------------------
-@st.dialog("🎯 목표(D-Day) 관리")
-def mock_goal_popup():
-    st.caption("프로젝트별 목표를 관리합니다. 가장 급한 목표가 메인에 뜹니다.")
-    
-    # 목록 예시
-    goals = [
-        ("업무/사업", "카이론 앱 개발", "2025-12-07"),
-        ("CTA 공부", "1차 시험", "2026-04-25"),
-        ("건강/운동", "체중 감량", "2025-12-31")
-    ]
-    
-    for cat, name, date in goals:
-        with st.container(border=True):
-            c1, c2, c3 = st.columns([1.5, 2, 0.8], vertical_alignment="center")
-            c1.markdown(f":{CATEGORY_COLORS.get(cat, 'gray')}[**[{cat}]**]")
-            c2.write(f"{name} ({date})")
-            c3.button("삭제", key=f"del_g_{name}")
+@st.cache_resource(ttl=3600)
+def get_client():
+    if "gcp_service_account" not in st.secrets: return None
+    scope = ['https://spreadsheets.google.com/feeds', 'https://www.googleapis.com/auth/drive']
+    creds = ServiceAccountCredentials.from_json_keyfile_dict(dict(st.secrets["gcp_service_account"]), scope)
+    return gspread.authorize(creds)
 
-    st.markdown("---")
-    st.write("###### ➕ 새 목표 추가")
-    with st.form("goal_form"):
-        c1, c2 = st.columns(2)
-        c1.selectbox("카테고리", PROJECT_CATEGORIES)
-        c2.text_input("목표명")
-        st.date_input("목표 날짜")
-        st.form_submit_button("목표 등록", type="primary")
+def get_sheet(sheet_name):
+    client = get_client()
+    if not client: return None
+    try: return client.open("CTA_Study_Data").worksheet(sheet_name)
+    except: return None 
 
-# ---------------------------------------------------------
-# [팝업 2] Inbox(생각 보관함)
-# ---------------------------------------------------------
-@st.dialog("📥 Inbox (생각 보관함)")
-def mock_inbox_popup():
-    st.caption("할 일이나 아이디어를 임시로 보관하세요.")
-    
-    tab1, tab2 = st.tabs(["➕ 추가하기", "📋 목록 (2)"])
-    
-    with tab1:
-        with st.form("inbox_form"):
-            c1, c2 = st.columns([1, 2])
-            c1.selectbox("카테고리", PROJECT_CATEGORIES)
-            c2.text_input("내용")
-            st.text_area("메모/링크", height=80)
-            st.form_submit_button("보관함에 저장", type="primary")
-            
-    with tab2:
-        for i in range(2):
-            with st.container(border=True):
-                c1, c2 = st.columns([4, 1], vertical_alignment="center")
-                c1.markdown("**[업무] 디자인 시안 피드백 정리**")
-                c1.caption("참고: 카톡 내용 확인하기")
-                c2.button("삭제", key=f"inb_del_{i}")
+# --- Settings ---
+def load_settings():
+    defaults = {
+        "telegram_id": "",
+        "project_goals": [{"category": "CTA 공부", "name": "1차 시험", "date": str(datetime.date(2026, 4, 25))}],
+        "inbox_items": [] 
+    }
+    sh = get_sheet("Settings")
+    if not sh: return defaults
+    try:
+        records = sh.get_all_records()
+        for r in records:
+            k, v = r.get("Key"), r.get("Value")
+            if k in defaults and v:
+                defaults[k] = json.loads(v)
+        return defaults
+    except: return defaults
 
-# ---------------------------------------------------------
-# [팝업 3] 템플릿(루틴) 관리
-# ---------------------------------------------------------
-@st.dialog("💾 템플릿(루틴) 관리")
-def mock_template_popup():
-    st.caption("자주 쓰는 하루 일과를 세트로 만드세요.")
-    
-    c1, c2 = st.columns([3, 1], vertical_alignment="bottom")
-    c1.selectbox("편집할 템플릿", ["평일 루틴 (기본)", "주말 몰입", "+ 새 템플릿 만들기"])
-    c2.button("삭제", type="primary")
-    
-    st.markdown("---")
-    st.write("###### '평일 루틴' 구성")
-    
-    # 예시 데이터
-    dummy_routine = [
-        ("08:00", "CTA 공부", "아침 백지 복습"),
-        ("13:00", "건강/운동", "점심 식사"),
-        ("19:00", "기타/생활", "저녁 식사")
-    ]
-    
-    # 헤더
-    h1, h2, h3, h4 = st.columns([1, 1.2, 3, 0.5])
-    h1.caption("시간")
-    h2.caption("카테고리")
-    h3.caption("내용")
-    
-    for t_time, t_cat, t_main in dummy_routine:
-        r1, r2, r3, r4 = st.columns([1, 1.2, 3, 0.5], vertical_alignment="center")
-        r1.text(t_time)
-        r2.text(t_cat)
-        r3.write(f"**{t_main}**")
-        r4.button("x", key=f"rt_{t_time}")
+def save_setting(key, value):
+    sh = get_sheet("Settings")
+    if not sh: return
+    try:
+        val_str = json.dumps(value, ensure_ascii=False)
+        cell = sh.find(key)
+        if cell: sh.update_cell(cell.row, 2, val_str)
+        else: sh.append_row([key, val_str])
+    except: pass
+
+# --- Daily Task ---
+def load_day_data(target_date):
+    date_str = target_date.strftime("%Y-%m-%d")
+    data = {"tasks": [], "master": {"wakeup": False, "reflection": "", "total_time": 0}}
+    client = get_client()
+    if not client: return data
+
+    try:
+        sh_master = client.open("CTA_Study_Data").worksheet("Daily_Master")
+        masters = sh_master.get_all_records()
+        day_m = next((item for item in masters if str(item["날짜"]) == date_str), None)
+        if day_m:
+            data["master"]["wakeup"] = (str(day_m.get("기상성공")).upper() == "TRUE")
+            data["master"]["reflection"] = day_m.get("한줄평", "")
+            data["master"]["total_time"] = float(day_m.get("총집중시간(초)", 0))
+
+        sh_detail = client.open("CTA_Study_Data").worksheet("Task_Details")
+        details = sh_detail.get_all_records()
+        data["tasks"] = [d for d in details if str(d["날짜"]) == date_str]
         
-    with st.expander("➕ 항목 추가"):
-        e1, e2 = st.columns([1, 1.5])
-        e1.time_input("시간")
-        e2.selectbox("카테고리", PROJECT_CATEGORIES, key="t_add_cat")
-        st.text_input("내용", key="t_add_main")
-        st.button("리스트에 추가", use_container_width=True)
+        for t in data["tasks"]:
+            t['is_running'] = False
+            t['last_start'] = None
+            t['accumulated'] = float(t.get('소요시간(초)', 0))
+        return data
+    except: return data
 
+def save_day_data(target_date, tasks, master_data):
+    date_str = target_date.strftime("%Y-%m-%d")
+    client = get_client()
+    if not client: return False
+    try:
+        doc = client.open("CTA_Study_Data")
+        
+        # Master Save
+        sh_m = doc.worksheet("Daily_Master")
+        cell = None
+        try: cell = sh_m.find(date_str)
+        except: pass
+        row_data = [date_str, "TRUE" if master_data['wakeup'] else "FALSE", master_data['total_time'], master_data['reflection']]
+        
+        if cell: sh_m.update(range_name=f"A{cell.row}:D{cell.row}", values=[row_data])
+        else: sh_m.append_row(row_data)
+            
+        # Task Save
+        sh_d = doc.worksheet("Task_Details")
+        all_records = sh_d.get_all_records()
+        kept_records = [r for r in all_records if str(r.get("날짜")) != date_str]
+        
+        sh_d.clear()
+        sh_d.append_row(["ID", "날짜", "시간", "카테고리", "할일_Main", "할일_Sub", "상태", "소요시간(초)", "참고자료"])
+        
+        rows_to_add = []
+        for r in kept_records: rows_to_add.append(list(r.values()))
+        
+        for t in tasks:
+            curr_acc = t['accumulated']
+            if t.get('is_running'): curr_acc += (time.time() - t['last_start'])
+            rows_to_add.append([
+                str(t.get('ID', uuid.uuid4())), date_str, t.get('시간', '00:00'),
+                t.get('카테고리', '기타'), t.get('할일_Main', ''), t.get('할일_Sub', ''),
+                t.get('상태', '진행중'), round(curr_acc, 2), t.get('참고자료', '')
+            ])
+        
+        if rows_to_add: sh_d.append_rows(rows_to_add)
+        return True
+    except Exception as e:
+        st.error(f"저장 오류: {e}")
+        return False
 
-# =========================================================
-# [UI] 사이드바 Layout
-# =========================================================
+# --- Templates ---
+def get_templates():
+    sh = get_sheet("Templates")
+    if not sh: return []
+    try: return sh.get_all_records()
+    except: return []
+
+def add_template_row(name, time_str, cat, main, sub):
+    sh = get_sheet("Templates")
+    if not sh: return
+    try: sh.append_row([name, time_str, cat, main, sub])
+    except: pass
+
+def delete_template_row(row_idx):
+    sh = get_sheet("Templates")
+    if not sh: return
+    try: sh.delete_rows(row_idx)
+    except: pass
+
+# ---------------------------------------------------------
+# 3. AI 시뮬레이션 로직 (추천 알고리즘)
+# ---------------------------------------------------------
+def generate_ai_suggestion(category, main_input):
+    """
+    사용자의 카테고리와 입력된 메인 목표를 기반으로 세부 할 일을 추천합니다.
+    (현재는 룰베이스 시뮬레이션 -> 추후 GPT 연동)
+    """
+    suggestions = []
+    
+    if category == "CTA 공부":
+        if "세법" in main_input:
+            suggestions = ["- 법인세 3강 수강", "- 익금/손금 불산입 항목 암기", "- 기출문제 10문항 풀이 (타이머 필수)"]
+        elif "회계" in main_input:
+            suggestions = ["- 재무회계 고급 챕터 복습", "- 연결재무제표 작성 연습", "- 오답노트 정리"]
+        else:
+            suggestions = ["- 오늘 진도 3강 수강하기", "- 백지 복습 20분", "- 핵심 키워드 정리"]
+            
+    elif category == "업무/사업":
+        if "앱" in main_input or "개발" in main_input:
+            suggestions = ["- 주요 기능 UI/UX 스케치", "- DB 스키마 설계 점검", "- 버그 리포트 확인 및 수정"]
+        elif "미팅" in main_input:
+            suggestions = ["- 회의 안건(Agenda) 정리", "- 지난 회의록 리마인드", "- 액션 아이템 도출"]
+        else:
+            suggestions = ["- 이메일함 정리 및 회신", "- 주간 업무 우선순위 재설정", "- 관련 시장 뉴스 스크랩"]
+            
+    elif category == "건강/운동":
+        suggestions = ["- 스트레칭 10분 (폼롤러)", "- 유산소 30분 (심박수 130 이상)", "- 스쿼트 3세트 진행"]
+        
+    else:
+        suggestions = ["- 책상 정리 및 환기", "- 내일 할 일 미리 계획하기", "- 명상 5분"]
+        
+    return "\n".join(suggestions)
+
+# ---------------------------------------------------------
+# 4. 초기화
+# ---------------------------------------------------------
+if 'init' not in st.session_state:
+    settings = load_settings()
+    st.session_state.telegram_id = settings.get('telegram_id', '')
+    st.session_state.project_goals = settings.get('project_goals', [])
+    st.session_state.inbox_items = settings.get('inbox_items', [])
+    st.session_state.tasks = []
+    st.session_state.master = {"wakeup": False, "reflection": "", "total_time": 0}
+    st.session_state.view_mode = "Daily View"
+    st.session_state.selected_date = datetime.date.today()
+    st.session_state.loaded_date = None
+    st.session_state.ai_suggestion_temp = "" # AI 추천 임시 저장소
+    st.session_state.init = True
+
+# ---------------------------------------------------------
+# 5. 팝업 UI (Dialogs)
+# ---------------------------------------------------------
+@st.dialog("📝 템플릿(루틴) 관리", width="large")
+def manage_templates_modal():
+    st.caption("자주 사용하는 루틴을 세트로 만들어두세요.")
+    st.write("###### ➕ 템플릿 항목 추가")
+    with st.form("new_template_form", clear_on_submit=True):
+        c1, c2 = st.columns([1.5, 1])
+        t_name = c1.text_input("템플릿 이름 (예: 평일)", placeholder="묶음 이름")
+        t_time = c2.time_input("시간", datetime.time(9,0))
+        c3, c4 = st.columns([1, 2])
+        t_cat = c3.selectbox("카테고리", PROJECT_CATEGORIES)
+        t_main = c4.text_input("할 일 내용")
+        if st.form_submit_button("추가"):
+            if t_name and t_main:
+                add_template_row(t_name, t_time.strftime("%H:%M"), t_cat, t_main, "")
+                st.toast(f"'{t_name}'에 추가되었습니다.")
+                st.rerun()
+            else: st.warning("이름과 내용을 입력해주세요.")
+
+    st.divider()
+    st.write("###### 📋 저장된 템플릿 목록")
+    templates = get_templates()
+    if templates:
+        for i, t in enumerate(templates):
+            col1, col2, col3, col4 = st.columns([1.5, 3, 1, 0.5], vertical_alignment="center")
+            col1.caption(f"[{t['템플릿명']}] {t['시간']}")
+            col2.write(f"**{t['할일_Main']}**")
+            col3.caption(t['카테고리'])
+            if col4.button("x", key=f"del_temp_{i}"):
+                delete_template_row(i + 2)
+                st.rerun()
+    else: st.info("등록된 템플릿이 없습니다.")
+
+@st.dialog("🎯 목표(D-Day) 관리")
+def goal_manager():
+    st.caption("가장 급한 목표가 메인 화면에 표시됩니다.")
+    if st.session_state.project_goals:
+        for i, g in enumerate(st.session_state.project_goals):
+            c1, c2, c3 = st.columns([2, 2, 1])
+            c1.markdown(f"**[{g['category']}]**")
+            c2.write(f"{g['name']} ({g['date']})")
+            if c3.button("삭제", key=f"del_g_{i}"):
+                del st.session_state.project_goals[i]
+                save_setting("project_goals", st.session_state.project_goals)
+                st.rerun()
+    
+    with st.form("new_goal"):
+        c1, c2 = st.columns(2)
+        cat = c1.selectbox("카테고리", PROJECT_CATEGORIES)
+        nm = c2.text_input("목표명")
+        dt = st.date_input("목표일")
+        if st.form_submit_button("추가"):
+            st.session_state.project_goals.append({"category": cat, "name": nm, "date": str(dt)})
+            st.session_state.project_goals.sort(key=lambda x: x['date'])
+            save_setting("project_goals", st.session_state.project_goals)
+            st.rerun()
+
+@st.dialog("📥 Inbox 관리", width="large")
+def manage_inbox_modal():
+    if st.session_state.inbox_items:
+        st.write("###### 📋 보관된 항목")
+        for i, item in enumerate(st.session_state.inbox_items):
+            c1, c2, c3 = st.columns([1, 4, 1], vertical_alignment="center")
+            c1.caption(f"[{item['category']}]")
+            c2.write(f"**{item['task']}**")
+            if item.get('memo'): c2.caption(f"└ {item['memo']}")
+            if c3.button("삭제", key=f"rm_inb_{i}"):
+                 del st.session_state.inbox_items[i]
+                 save_setting("inbox_items", st.session_state.inbox_items)
+                 st.rerun()
+            st.divider()
+    else: st.info("비어있음")
+
+    st.write("###### ➕ 추가")
+    with st.form("inbox_add"):
+        c1, c2 = st.columns([1, 2])
+        cat = c1.selectbox("카테고리", PROJECT_CATEGORIES)
+        task = c2.text_input("할 일")
+        if st.form_submit_button("저장"):
+            st.session_state.inbox_items.append({"category": cat, "task": task, "created_at": str(datetime.datetime.now())})
+            save_setting("inbox_items", st.session_state.inbox_items)
+            st.rerun()
+
+# ---------------------------------------------------------
+# 6. 메인 로직 (Daily View)
+# ---------------------------------------------------------
+def render_daily_view():
+    if any(t.get('is_running') for t in st.session_state.tasks):
+        st_autorefresh(interval=1000, key="timer_tick")
+
+    sel_date = st.session_state.selected_date
+    if st.session_state.loaded_date != sel_date:
+        data = load_day_data(sel_date)
+        st.session_state.tasks = data['tasks']
+        st.session_state.master = data['master']
+        st.session_state.loaded_date = sel_date
+
+    today = datetime.date.today()
+    future_goals = [g for g in st.session_state.project_goals if g['date'] >= str(today)]
+    header_suffix = ""
+    if future_goals:
+        pg = min(future_goals, key=lambda x: x['date'])
+        d_obj = datetime.datetime.strptime(pg['date'], '%Y-%m-%d').date()
+        delta = (d_obj - sel_date).days
+        d_str = f"D-{delta}" if delta >= 0 else f"D+{-delta}"
+        header_suffix = f"({pg['name']} {d_str})"
+    
+    st.title(f"📝 {sel_date.strftime('%Y-%m-%d')} {header_suffix}")
+
+    c1, c2 = st.columns([1, 2], vertical_alignment="center")
+    with c1:
+        st.session_state.master['wakeup'] = st.checkbox("☀️ 7시 기상 성공!", value=st.session_state.master['wakeup'])
+    with c2:
+        templates = get_templates()
+        if templates:
+            t_names = sorted(list(set([t['템플릿명'] for t in templates])))
+            c_sel, c_btn = st.columns([3, 1])
+            sel_temp = c_sel.selectbox("루틴 불러오기", ["선택하세요"] + t_names, label_visibility="collapsed")
+            if c_btn.button("적용", use_container_width=True):
+                if sel_temp != "선택하세요":
+                    new_tasks = [t for t in templates if t['템플릿명'] == sel_temp]
+                    for nt in new_tasks:
+                        st.session_state.tasks.append({
+                            "ID": str(uuid.uuid4()), "시간": nt['시간'], "카테고리": nt['카테고리'],
+                            "할일_Main": nt['할일_Main'], "할일_Sub": nt.get('할일_Sub', ''),
+                            "상태": "예정", "소요시간(초)": 0, "참고자료": "",
+                            "accumulated": 0, "is_running": False
+                        })
+                    st.rerun()
+        else: st.caption("👈 사이드바에서 템플릿을 만들어보세요.")
+    
+    st.divider()
+
+    # [할 일 입력 + AI Copilot]
+    with st.expander("➕ 새로운 할 일 추가 / ✨ AI Copilot", expanded=True):
+        # AI 제안 버튼 (Form 밖에 배치하여 즉시 반응)
+        c_ai1, c_ai2 = st.columns([3, 1], vertical_alignment="bottom")
+        
+        with st.form("add_task_form", clear_on_submit=False):
+            c_time, c_cat = st.columns([1, 1])
+            i_time = c_time.time_input("시작 시간", datetime.time(9,0))
+            i_cat = c_cat.selectbox("카테고리", PROJECT_CATEGORIES, key="input_cat")
+            
+            i_main = st.text_input("메인 목표 (예: 오전 학습 세션)", key="input_main")
+            
+            # AI 버튼 클릭 시 텍스트 채우기 로직
+            if st.form_submit_button("✨ AI 제안 받기 (클릭)"):
+                suggestion = generate_ai_suggestion(i_cat, i_main)
+                st.session_state.ai_suggestion_temp = suggestion
+                st.rerun()
+
+            # 세부 목표 (AI 제안이 있으면 그걸 기본값으로)
+            default_sub = st.session_state.get("ai_suggestion_temp", "")
+            i_sub = st.text_area("세부 목표 (줄바꿈으로 구분)", value=default_sub, height=100, placeholder="- 강의 3강 수강\n- 기출문제 10개 풀기")
+            i_link = st.text_input("참고 링크/자료")
+            
+            if st.form_submit_button("등록 (Save Task)", type="primary"):
+                st.session_state.tasks.append({
+                    "ID": str(uuid.uuid4()), "시간": i_time.strftime("%H:%M"), "카테고리": i_cat,
+                    "할일_Main": i_main, "할일_Sub": i_sub, "상태": "예정",
+                    "소요시간(초)": 0, "참고자료": i_link, "accumulated": 0, "is_running": False
+                })
+                st.session_state.ai_suggestion_temp = "" # 등록 후 초기화
+                st.rerun()
+
+    if not st.session_state.tasks:
+        st.info("등록된 일정이 없습니다.")
+    else:
+        st.session_state.tasks.sort(key=lambda x: x['시간'])
+        total_focus_sec = 0
+        
+        for i, t in enumerate(st.session_state.tasks):
+            cat_color = CATEGORY_COLORS.get(t['카테고리'], "gray")
+            with st.container(border=True):
+                c1, c2, c3, c4, c5 = st.columns([1, 1.2, 3.5, 1.2, 1.5], vertical_alignment="center")
+                c1.text(t['시간'])
+                c2.markdown(f":{cat_color}[**{t['카테고리']}**]")
+                c3.markdown(f"**{t['할일_Main']}**")
+                
+                curr_dur = t['accumulated']
+                if t['is_running']: curr_dur += (time.time() - t['last_start'])
+                c4.markdown(f"⏱️ `{format_time(curr_dur)}`")
+                
+                if sel_date == datetime.date.today():
+                    if t['is_running']:
+                        if c5.button("⏹️ 중지", key=f"stop_{i}", use_container_width=True):
+                            t['accumulated'] += (time.time() - t['last_start'])
+                            t['is_running'] = False; st.rerun()
+                    else:
+                        if c5.button("▶️ 시작", key=f"start_{i}", use_container_width=True, type="primary"):
+                            t['is_running'] = True; t['last_start'] = time.time(); st.rerun()
+                else: c5.caption("-")
+                
+                has_detail = bool(t['할일_Sub'] or t['참고자료'])
+                exp_label = "🔽 세부 내용" if has_detail else "🔽 추가"
+                with st.expander(exp_label):
+                    new_sub = st.text_area("세부 목표", value=t['할일_Sub'], key=f"sub_{i}")
+                    new_link = st.text_input("자료 링크", value=t['참고자료'], key=f"link_{i}")
+                    if new_sub != t['할일_Sub'] or new_link != t['참고자료']:
+                        t['할일_Sub'] = new_sub; t['참고자료'] = new_link
+                    
+                    if st.button("🗑️ 삭제", key=f"del_{i}"):
+                        del st.session_state.tasks[i]; st.rerun()
+
+            if t['카테고리'] not in NON_STUDY_CATEGORIES: total_focus_sec += curr_dur
+
+    st.markdown("---")
+    st.subheader("📊 Daily Report")
+    st.session_state.master['total_time'] = total_focus_sec
+    hours = total_focus_sec / 3600
+    
+    k1, k2 = st.columns(2)
+    k1.metric("총 집중 시간", format_time(total_focus_sec))
+    k2.metric("평가", "Good" if hours >= 8 else "Fighting")
+    
+    st.session_state.master['reflection'] = st.text_area("✍️ 오늘의 회고", value=st.session_state.master['reflection'])
+    
+    if st.button("💾 모든 기록 저장하기", type="primary", use_container_width=True):
+        if save_day_data(sel_date, st.session_state.tasks, st.session_state.master):
+            st.success("✅ 저장되었습니다!")
+        else: st.error("❌ 저장 실패")
+
+# ---------------------------------------------------------
+# 7. 실행부 (Router)
+# ---------------------------------------------------------
 with st.sidebar:
     st.title("🗂️ 메뉴")
-    st.button("📝 Daily Planner", use_container_width=True, type="primary")
-    st.button("📊 Dashboard", use_container_width=True)
-    
-    st.markdown("---")
-    
-    # 팝업 트리거 버튼들
-    if st.button("📥 Inbox 관리 (2)", use_container_width=True):
-        mock_inbox_popup()
-    
-    if st.button("💾 템플릿 관리", use_container_width=True):
-        mock_template_popup()
-
+    if st.button("📝 Daily Planner", use_container_width=True): 
+        st.session_state.view_mode = "Daily View"; st.rerun()
+    if st.button("📊 Dashboard", use_container_width=True): 
+        st.session_state.view_mode = "Dashboard"; st.rerun()
+        
     st.markdown("---")
     st.subheader("🎯 목표")
+    if st.session_state.project_goals:
+        today = datetime.date.today()
+        for g in st.session_state.project_goals:
+            delta = (datetime.datetime.strptime(g['date'], '%Y-%m-%d').date() - today).days
+            d_str = f"D-{delta}" if delta >= 0 else f"D+{-delta}"
+            st.caption(f"**{g['name']}** ({d_str})")
+    if st.button("목표 설정"): goal_manager()
     
-    # 목표 리스트 간략 표시
-    st.info("**[업무] 카이론 앱 개발**\nD-1 (12/07)")
-    st.caption("**[공부] 1차 시험** (D-140)")
+    st.markdown("---")
+    if st.button(f"📥 Inbox ({len(st.session_state.inbox_items)})", use_container_width=True): manage_inbox_modal()
     
-    if st.button("목표 설정 팝업", use_container_width=True):
-        mock_goal_popup()
-        
+    if st.button("💾 템플릿 관리", use_container_width=True): manage_templates_modal()
+
     st.markdown("---")
     with st.expander("⚙️ 고급 설정"):
-        st.text_input("텔레그램 ID", value="12345678")
-        st.button("ID 저장")
+        tel_id = st.text_input("텔레그램 ID", value=st.session_state.telegram_id)
+        if st.button("ID 저장"):
+            st.session_state.telegram_id = tel_id
+            save_setting("telegram_id", tel_id)
 
-
-# =========================================================
-# [UI] 메인 화면 Layout (Daily View)
-# =========================================================
-
-# 1. 헤더 (가장 급한 목표 강조)
-st.title("📝 2025-12-06 (카이론 앱 개발 D-1)")
-
-# 2. 목표 현황판 (가로 배치)
-c1, c2, c3, c4 = st.columns(4)
-c1.metric("🚨 카이론 개발", "2025-12-07", "D-1", delta_color="inverse")
-c2.metric("📅 1차 시험", "2026-04-25", "D-140")
-c3.metric("📉 체중 감량", "2025-12-31", "D-25")
-c4.metric("🥕 당근 마켓", "2025-12-07", "D-1")
-
-st.divider()
-
-# 3. 상단 컨트롤 (기상 / 템플릿)
-ctrl_c1, ctrl_c2 = st.columns([1, 2], vertical_alignment="center")
-with ctrl_c1:
-    st.checkbox("☀️ 7시 기상 성공!", value=True)
-with ctrl_c2:
-    sc1, sc2 = st.columns([3, 1])
-    sc1.selectbox("루틴 불러오기", ["선택하세요", "평일 루틴", "주말 루틴"], label_visibility="collapsed")
-    sc2.button("적용", use_container_width=True)
-
-st.write("") # 간격
-
-# 4. 할 일 입력 (접었다 폈다)
-with st.expander("➕ 새로운 할 일 추가 (Click)", expanded=True):
-    r1_c1, r1_c2 = st.columns([1, 1])
-    r1_c1.time_input("시작 시간", datetime.time(14,0))
-    r1_c2.selectbox("카테고리", PROJECT_CATEGORIES)
+if st.session_state.view_mode == "Daily View":
+    render_daily_view()
     
-    st.text_input("메인 목표", placeholder="예: 오후 집중 업무")
-    st.text_area("세부 목표 (선택)", height=60, placeholder="- 보고서 작성\n- 메일 회신")
-    st.text_input("참고 링크 (선택)")
-    
-    st.button("등록", use_container_width=True, type="primary")
-
-st.markdown("---")
-
-# 5. 할 일 리스트 (Main Task List)
-st.subheader("📋 오늘의 할 일")
-
-# 더미 데이터
-dummy_tasks = [
-    {"time": "09:00", "cat": "CTA 공부", "main": "오전 학습 세션", "sub": "- 세법 3강\n- 복습하기", "link": "", "dur": 7200, "state": "done"},
-    {"time": "12:00", "cat": "건강/운동", "main": "점심 식사", "sub": "", "link": "", "dur": 3600, "state": "done"},
-    {"time": "13:00", "cat": "업무/사업", "main": "카이론 앱 UI 수정", "sub": "- 메인화면 배치 변경\n- 컬러셋 확정", "link": "figma.com/...", "dur": 1540, "state": "running"},
-    {"time": "19:00", "cat": "기타/생활", "main": "저녁 식사", "sub": "", "link": "", "dur": 0, "state": "ready"},
-]
-
-for t in dummy_tasks:
-    # 카드형 컨테이너
-    with st.container(border=True):
-        # [Header Row] 시간 | 카테고리 | 메인 | 타이머 | 버튼
-        c1, c2, c3, c4, c5 = st.columns([0.8, 1.2, 3.5, 1, 1.5], vertical_alignment="center")
-        
-        c1.text(t['time'])
-        c2.markdown(f":{CATEGORY_COLORS.get(t['cat'])}[**{t['cat']}**]")
-        c3.markdown(f"**{t['main']}**")
-        
-        # 타이머 표시
-        m, s = divmod(t['dur'], 60)
-        h, m = divmod(m, 60)
-        t_str = f"{h:02d}:{m:02d}:{s:02d}"
-        
-        if t['state'] == 'running':
-            c4.markdown(f"🔥 `{t_str}`")
-            c5.button("⏹️ 중지", key=f"stop_{t['time']}", use_container_width=True)
-        else:
-            c4.markdown(f"⏱️ `{t_str}`")
-            c5.button("▶️ 시작", key=f"start_{t['time']}", use_container_width=True)
-            
-        # [Detail Row] 세부내용 (있으면 펼치기)
-        has_detail = bool(t['sub'] or t['link'])
-        exp_label = "🔽 세부 내용 보기" if has_detail else "🔽 내용 추가"
-        
-        with st.expander(exp_label):
-            st.text_area("세부 목표", value=t['sub'], key=f"sub_{t['time']}")
-            st.text_input("자료 링크", value=t['link'], key=f"link_{t['time']}")
-            
-            # 삭제 버튼 (우측 정렬 느낌)
-            d1, d2 = st.columns([4, 1])
-            d2.button("🗑️ 삭제", key=f"del_{t['time']}", use_container_width=True)
-
-st.markdown("---")
-
-# 6. 하단 리포트 (Daily Report)
-st.subheader("📊 Daily Report")
-
-k1, k2, k3 = st.columns(3)
-k1.metric("총 집중 시간", "03:25:40", help="순수 공부/업무 시간")
-k2.metric("목표 달성률", "35%")
-k3.metric("오늘의 평가", "Fighting 🔥")
-
-st.caption("프로젝트별 시간 비중")
-st.progress(60, text="CTA 공부 (60%)")
-st.progress(30, text="업무/사업 (30%)")
-
-st.text_area("✍️ 오늘의 회고", placeholder="오늘 하루는 어땠나요? 내일의 다짐을 적어보세요.")
-
-if st.button("💾 모든 기록 저장하기", type="primary", use_container_width=True):
-    st.toast("✅ 저장되었습니다!")
-
-# ---------------------------------------------------------
-# 7. AI Chat (멀티미디어 비서 기능 탑재)
-# ---------------------------------------------------------
-with chat_col:
-    st.header("💬 AI Coach")
-    st.caption("비즈니스 인사이트 & 건강 코칭")
-    
-    # 채팅 기록 초기화
-    if "messages" not in st.session_state: 
-        st.session_state.messages = [
-            {"role": "assistant", "content": "안녕하세요! 무엇을 도와드릴까요?\n\n💡 **Tip:** '스트레칭', '경제 뉴스', '동기부여'라고 입력해보세요."}
-        ]
-
-    # 채팅창 UI (높이 지정으로 스크롤 가능하게)
-    with st.container(height=600, border=True):
-        for msg in st.session_state.messages:
-            with st.chat_message(msg["role"]):
-                st.markdown(msg["content"])
-                # [핵심] 메시지에 동영상/이미지 정보가 있으면 렌더링
-                if "video_url" in msg:
-                    st.video(msg["video_url"])
-                if "news_data" in msg:
-                    for news in msg["news_data"]:
-                        st.info(f"**[{news['source']}] {news['title']}**\n\n{news['summary']}")
-
-    # 사용자 입력 처리
-    if prompt := st.chat_input("질문을 입력하세요..."):
-        # 1. 사용자 메시지 표시
-        st.session_state.messages.append({"role": "user", "content": prompt})
-        with st.chat_message("user"): 
-            st.markdown(prompt)
-
-        # 2. AI 응답 로직 (룰베이스 시뮬레이션)
-        with st.chat_message("assistant"):
-            response_content = ""
-            media_content = {} # 영상이나 뉴스 데이터 담을 그릇
-            
-            # (A) 건강/운동: 스트레칭 요청 시 유튜브 팝업
-            if "스트레칭" in prompt or "운동" in prompt or "목 아파" in prompt:
-                response_content = "장시간 공부하느라 목과 어깨가 뭉치셨군요. 🐢\n지금 바로 의자에서 할 수 있는 **5분 거북목 교정 스트레칭** 영상을 준비했습니다. 따라 해보세요!"
-                media_content["video_url"] = "https://www.youtube.com/watch?v=M5J2aaw3YBc" # (예시: 피지컬갤러리)
-            
-            # (B) 비즈니스: 뉴스/시장 파악 요청
-            elif "뉴스" in prompt or "시장" in prompt or "경제" in prompt:
-                response_content = "📊 **오늘의 주요 핀테크 & 경제 브리핑**입니다.\n환율 변동성과 금리 이슈를 체크해보세요."
-                media_content["news_data"] = [
-                    {"source": "경제신문", "title": "美 연준, 금리 인하 시그널... 핀테크 시장 영향은?", "summary": "금리 인하 시 스타트업 투자 심리가 회복될 것으로 전망됩니다."},
-                    {"source": "IT뉴스", "title": "토스 vs 카카오페이, 외국인 투자자 유치 경쟁", "summary": "국내 핀테크 기업들이 글로벌 시장 확장을 위해 외국인 전용 서비스를 강화하고 있습니다."}
-                ]
-            
-            # (C) 멘탈/동기부여
-            elif "하기 싫어" in prompt or "지쳐" in prompt:
-                response_content = "많이 힘드시죠? 😥 합격한 선배들도 다 겪었던 과정입니다.\n잠시 머리 식히고 **동기부여 영상** 하나 보고 다시 시작해요. 할 수 있습니다!"
-                media_content["video_url"] = "https://www.youtube.com/watch?v=F0IUs8q1YV0" # (예시: 동기부여 영상)
-
-            # (D) 일반 대화
-            else:
-                response_content = f"입력하신 내용: '{prompt}'\n\n(아직은 시뮬레이션 단계라 '스트레칭', '뉴스' 같은 키워드에만 반응해요!)"
-
-            # 3. 화면에 출력 및 저장
-            st.markdown(response_content)
-            if "video_url" in media_content:
-                st.video(media_content["video_url"])
-            if "news_data" in media_content:
-                for news in media_content["news_data"]:
-                    st.info(f"**[{news['source']}] {news['title']}**\n\n{news['summary']}")
-            
-            # 세션에 저장 (나중에 다시 봐도 영상이 남아있게)
-            ai_msg = {"role": "assistant", "content": response_content}
-            ai_msg.update(media_content) # 영상/뉴스 정보 합치기
-            st.session_state.messages.append(ai_msg)
-            
-            # (중요) 채팅창 갱신을 위해 리런
-            # st.rerun() # 채팅 입력 직후 리런하면 입력창 포커스가 풀리는 경우가 있어 여기선 생략하거나 필요시 추가
+elif st.session_state.view_mode == "Dashboard":
+    st.title("📊 대시보드")
+    client = get_client()
+    if client:
+        try:
+            df = pd.DataFrame(client.open("CTA_Study_Data").worksheet("Daily_Master").get_all_records())
+            if not df.empty:
+                st.subheader("📅 집중 시간 추이")
+                st.line_chart(df, x="날짜", y="총집중시간(초)")
+            else: st.info("데이터 없음")
+        except: st.error("데이터 로드 실패")
