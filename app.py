@@ -36,7 +36,7 @@ def get_sheet(sheet_name):
     client = get_client()
     if not client: return None
     try: return client.open("CTA_Study_Data").worksheet(sheet_name)
-    except: return None # 시트가 없거나 에러
+    except: return None 
 
 # --- [A] Settings (설정) ---
 def load_settings():
@@ -84,7 +84,6 @@ def load_day_data(target_date):
         # 1. Master Data Load
         sh_master = client.open("CTA_Study_Data").worksheet("Daily_Master")
         masters = sh_master.get_all_records()
-        # 해당 날짜 찾기
         day_m = next((item for item in masters if str(item["날짜"]) == date_str), None)
         if day_m:
             data["master"]["wakeup"] = (day_m.get("기상성공") == "TRUE")
@@ -101,7 +100,6 @@ def load_day_data(target_date):
         for t in data["tasks"]:
             t['is_running'] = False
             t['last_start'] = None
-            # DB 컬럼명을 세션 변수명과 매핑
             t['accumulated'] = float(t.get('소요시간(초)', 0))
             
         return data
@@ -111,7 +109,7 @@ def load_day_data(target_date):
 
 def save_day_data(target_date, tasks, master_data):
     """
-    해당 날짜의 기존 데이터를 *지우고* 현재 상태로 덮어씁니다. (가장 확실한 동기화 방법)
+    해당 날짜의 기존 데이터를 정리하고 현재 상태로 저장합니다.
     """
     date_str = target_date.strftime("%Y-%m-%d")
     client = get_client()
@@ -129,8 +127,6 @@ def save_day_data(target_date, tasks, master_data):
         row_data = [date_str, "TRUE" if master_data['wakeup'] else "FALSE", master_data['total_time'], master_data['reflection']]
         
         if cell:
-            # Update
-            # gspread update using range (A:D)
             rng = f"A{cell.row}:D{cell.row}"
             sh_m.update(rng, [row_data])
         else:
@@ -140,19 +136,9 @@ def save_day_data(target_date, tasks, master_data):
         sh_d = doc.worksheet("Task_Details")
         
         # 기존 해당 날짜 행들 찾아서 삭제 (역순 삭제가 안전)
-        # *주의: 대량 데이터 시 비효율적일 수 있으나, 개인용 앱에는 충분함*
         all_vals = sh_d.col_values(2) # B열이 날짜
         rows_to_delete = [i+1 for i, d in enumerate(all_vals) if d == date_str]
         
-        # 배치 삭제가 어려우므로, 필터링 후 덮어쓰기 방식 사용 
-        # (혹은 ID 기반 업데이트가 좋으나 복잡도 증가. 여기선 전체 로드 -> 필터 -> 전체 저장이 나을수도 있음. 
-        #  가장 간단하게는: 그냥 append만 하고 로드할 때 최신거만 가져오기? -> 아니요, 지우고 다시 쓰는게 깔끔함.)
-        
-        # 여기서는 Gspread의 한계로 인해, '덮어쓰기'보다는
-        # "새로운 리스트를 만들어서 시트 전체를 업데이트" 하는 방식이 더 빠를 수 있습니다.
-        # 하지만 안전을 위해 '기존 것 유지 + 수정된 것 반영' 로직으로 구현합니다.
-        
-        # (간소화) 일단은 '삭제 후 재등록' 로직을 구현합니다.
         for r_idx in reversed(rows_to_delete):
             sh_d.delete_rows(r_idx)
             
@@ -275,12 +261,10 @@ def render_daily_view():
         # 템플릿 불러오기 기능
         templates = get_templates()
         if templates:
-            # 템플릿 이름들만 추출 (중복제거)
             t_names = list(set([t['템플릿명'] for t in templates]))
             sel_temp = st.selectbox("📥 루틴(템플릿) 불러오기", ["선택하세요"] + t_names, label_visibility="collapsed")
             if st.button("적용", use_container_width=True):
                 if sel_temp != "선택하세요":
-                    # 해당 템플릿의 할 일들을 현재 리스트에 추가
                     new_tasks = [t for t in templates if t['템플릿명'] == sel_temp]
                     for nt in new_tasks:
                         st.session_state.tasks.append({
@@ -295,6 +279,8 @@ def render_daily_view():
                             "accumulated": 0, "is_running": False
                         })
                     st.rerun()
+        else:
+            st.caption("등록된 템플릿이 없습니다. (구글 시트 'Templates' 탭에 추가하세요)")
     
     st.divider()
 
@@ -334,7 +320,6 @@ def render_daily_view():
         
         for i, t in enumerate(st.session_state.tasks):
             # 1. Main Row
-            # 색상띠
             cat_color = CATEGORY_COLORS.get(t['카테고리'], "gray")
             
             with st.container(border=True):
@@ -362,24 +347,21 @@ def render_daily_view():
                             t['is_running'] = True
                             t['last_start'] = time.time()
                             st.rerun()
+                else:
+                    c5.caption("-")
                 
                 # 2. Detail Row (Expander for Details)
-                # 세부목표가 있거나 링크가 있으면 펼쳐볼 수 있게
                 has_detail = bool(t['할일_Sub'] or t['참고자료'])
                 exp_label = "🔽 세부 목표 및 메모" if has_detail else "🔽 세부 내용 추가"
                 
                 with st.expander(exp_label):
-                    # 편집 가능한 폼
                     new_sub = st.text_area("세부 목표", value=t['할일_Sub'], key=f"sub_{i}", height=100)
                     new_link = st.text_input("자료 링크", value=t['참고자료'], key=f"link_{i}")
                     
-                    # 내용이 바뀌면 즉시 반영
                     if new_sub != t['할일_Sub'] or new_link != t['참고자료']:
                         t['할일_Sub'] = new_sub
                         t['참고자료'] = new_link
-                        # (여기서 즉시 DB저장은 하지 않음, 저장 버튼 누를 때 일괄 저장)
                     
-                    # 삭제 버튼
                     if st.button("🗑️ 이 할 일 삭제", key=f"del_{i}"):
                         del st.session_state.tasks[i]
                         st.rerun()
@@ -423,7 +405,6 @@ with st.sidebar:
         
     st.markdown("---")
     st.subheader("🎯 목표 관리")
-    # 목표 D-Day 표시
     if st.session_state.project_goals:
         today = datetime.date.today()
         for g in st.session_state.project_goals:
@@ -445,7 +426,6 @@ if st.session_state.view_mode == "Daily View":
     
 elif st.session_state.view_mode == "Dashboard":
     st.title("📊 대시보드")
-    # V2 대시보드 로직 (간단 구현)
     client = get_client()
     if client:
         try:
