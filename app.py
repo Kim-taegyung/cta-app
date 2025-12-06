@@ -589,10 +589,34 @@ with main_col:
         st.session_state.target_time = st.number_input("목표 시간 (시간)", value=st.session_state.target_time, step=0.5)
         st.session_state.daily_reflection = st.text_area("✍️ 학습 일기 / 메모", value=st.session_state.daily_reflection, height=100)
         
+        # [수정됨] 하단 저장 버튼 로직 (멀티 목표 호환)
         if st.button(f"💾 {sel_date} 기록 저장하기", type="primary", use_container_width=True):
-            if save_to_google_sheets(sel_date, total_seconds, get_status_color(total_hours, st.session_state.target_time), st.session_state.wakeup_checked, st.session_state.tasks, st.session_state.target_time, st.session_state.d_day_date, st.session_state.favorite_tasks, st.session_state.daily_reflection):
+            # 1. 현재 등록된 목표 중 가장 가까운 D-Day 계산
+            today = datetime.date.today()
+            # 미래의 목표들만 추림
+            future_goals = [g for g in st.session_state.project_goals if g['date'] >= today]
+            
+            # 목표가 있으면 가장 가까운 날짜, 없으면 오늘 날짜를 저장
+            if future_goals:
+                main_d_day = min(future_goals, key=lambda x: x['date'])['date']
+            else:
+                main_d_day = today
+
+            # 2. save_to_google_sheets 함수에 계산된 main_d_day 전달
+            if save_to_google_sheets(
+                sel_date, 
+                total_seconds, 
+                get_status_color(total_hours, st.session_state.target_time), 
+                st.session_state.wakeup_checked, 
+                st.session_state.tasks, 
+                st.session_state.target_time, 
+                main_d_day,  # 여기가 수정됨 (st.session_state.d_day_date -> main_d_day)
+                st.session_state.favorite_tasks, 
+                st.session_state.daily_reflection
+            ):
                 st.success("저장되었습니다!")
-            else: st.error("저장 실패")
+            else: 
+                st.error("저장 실패")
 
     # [VIEW 3] Dashboard (대시보드)
     elif st.session_state.view_mode == "Dashboard (대시보드)":
@@ -636,3 +660,4 @@ with chat_col:
             st.markdown(response)
         st.session_state.messages.append({"role": "assistant", "content": response})
         st.rerun()
+
