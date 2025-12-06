@@ -39,7 +39,6 @@ def get_gspread_client():
     return client
 
 def get_default_tasks():
-    # 기본 템플릿 (카테고리 정확히 명시)
     return [
         {"plan_time": "08:00", "category": "CTA 공부", "task": "아침 백지 복습", "accumulated": 0, "last_start": None, "is_running": False},
         {"plan_time": "13:00", "category": "건강/운동", "task": "점심 식사 및 신체 유지 (운동)", "accumulated": 0, "last_start": None, "is_running": False},
@@ -47,15 +46,32 @@ def get_default_tasks():
         {"plan_time": "21:00", "category": "CTA 공부", "task": "당일 학습 백지 복습", "accumulated": 0, "last_start": None, "is_running": False},
     ]
 
+# [강력한 데이터 정제 함수] 화면 그리기 직전에 실행
+def sanitize_tasks_data(tasks):
+    for t in tasks:
+        # 1. 실행 상태 등 필수 키가 없으면 추가
+        if 'is_running' not in t: t['is_running'] = False
+        if 'accumulated' not in t: t['accumulated'] = 0
+        if 'last_start' not in t: t['last_start'] = None
+        
+        # 2. 카테고리 자동 교정 (키워드 기반)
+        task_name = t.get('task', '')
+        if "점심" in task_name or "저녁" in task_name or "운동" in task_name or "식사" in task_name:
+            t['category'] = "건강/운동"
+        elif "복습" in task_name or "학습" in task_name or "강의" in task_name:
+            # 카테고리가 없거나 이상하면 CTA 공부로
+            if t.get('category') not in PROJECT_CATEGORIES:
+                t['category'] = "CTA 공부"
+    return tasks
+
 # [설정 저장]
 def update_setting(key, value):
     try:
         client = get_gspread_client()
         if client is None: return False
         
-        try:
-            sheet = client.open("CTA_Study_Data").worksheet("Settings")
-        except:
+        try: sheet = client.open("CTA_Study_Data").worksheet("Settings")
+        except: 
             try:
                 sheet = client.open("CTA_Study_Data").add_worksheet(title="Settings", rows=100, cols=2)
                 sheet.append_row(["Key", "Value"])
@@ -86,9 +102,7 @@ def load_settings():
         "telegram_id": "",
         "project_goals": [{"category": "CTA 공부", "name": "1차 시험", "date": datetime.date(2026, 4, 25)}],
         "inbox_items": [],
-        "favorite_tasks": [
-            {"plan_time": "09:00", "category": "CTA 공부", "task": "오전 학습 세션", "key": "def_1"},
-        ]
+        "favorite_tasks": []
     }
     
     try:
@@ -131,7 +145,7 @@ def save_to_google_sheets(date, total_seconds, status, wakeup_success, tasks, ta
         st.error(f"저장 실패: {e}")
         return False
 
-# [데이터 로드 + 자동 복구 기능]
+# [데이터 로드]
 def load_data_for_date(target_date):
     client = get_gspread_client()
     data = {
@@ -156,19 +170,8 @@ def load_data_for_date(target_date):
                 if last_record.get('Tasks_JSON'):
                     try:
                         loaded_tasks = json.loads(last_record['Tasks_JSON'])
-                        for t in loaded_tasks: 
-                            t['is_running'] = False
-                            t['last_start'] = None
-                            
-                            # [자동 복구 로직] 과거 데이터의 카테고리가 이상하면 내용 기반으로 자동 수정
-                            task_name = t.get('task', '')
-                            if "점심" in task_name or "저녁" in task_name or "운동" in task_name:
-                                if t.get('category') != "건강/운동": t['category'] = "건강/운동"
-                            elif "복습" in task_name or "학습" in task_name:
-                                if t.get('category') == "미지정" or not t.get('category'): 
-                                    t['category'] = "CTA 공부"
-                                    
-                        data['tasks'] = loaded_tasks
+                        # 로드 시에도 정제 실행
+                        data['tasks'] = sanitize_tasks_data(loaded_tasks)
                     except: pass
                 
                 data['daily_reflection'] = last_record.get('Daily_Reflection', "")
@@ -363,7 +366,7 @@ with st.sidebar:
 
         st.markdown("---")
         
-        # [데이터 로드] 즐겨찾기(Favorites)는 제외하고 로드
+        # [데이터 로드]
         if 'loaded_date' not in st.session_state or st.session_state.loaded_date != st.session_state.selected_date:
             data = load_data_for_date(st.session_state.selected_date)
             st.session_state.tasks = data['tasks']
@@ -387,15 +390,19 @@ with st.sidebar:
                 st.rerun()
         
         if st.session_state.favorite_tasks:
-            # 삭제용 리스트 (안전하게 인덱스 처리)
-            fav_del_list = [f"[{t.get('category','-')}] {t['plan_time']} - {t['task']}" for t in st.session_state.favorite_tasks]
-            del_target = st.selectbox("삭제할 루틴", ["선택하세요"] + fav_del_list)
+            # 삭제도 텍스트 매칭으로 안전하게 처리
+            fav_options = ["선택하세요"] + [f"[{t.get('category','-')}] {t['plan_time']} - {t['task']}" for t in st.session_state.favorite_tasks]
+            del_target = st.selectbox("삭제할 루틴", fav_options)
             if st.button("선택한 루틴 삭제"):
                 if del_target != "선택하세요":
-                    idx = fav_del_list.index(del_target)
-                    del st.session_state.favorite_tasks[idx]
-                    update_setting("favorite_tasks", st.session_state.favorite_tasks)
-                    st.rerun()
+                    # 선택된 텍스트와 일치하는 항목 찾아서 삭제
+                    for i, t in enumerate(st.session_state.favorite_tasks):
+                        t_str = f"[{t.get('category','-')}] {t['plan_time']} - {t['task']}"
+                        if t_str == del_target:
+                            del st.session_state.favorite_tasks[i]
+                            update_setting("favorite_tasks", st.session_state.favorite_tasks)
+                            st.rerun()
+                            break
 
     st.markdown("---")
     with st.expander("⚙️ 사용자 설정", expanded=False):
@@ -466,6 +473,9 @@ with main_col:
         if any(t.get('is_running') for t in st.session_state.tasks):
             st_autorefresh(interval=1000, key="timer_refresh")
 
+        # [핵심] 화면 그릴 때마다 카테고리/데이터 정제 (자동 복구)
+        st.session_state.tasks = sanitize_tasks_data(st.session_state.tasks)
+
         sel_date = st.session_state.selected_date
         today = datetime.date.today()
         future_goals = [g for g in st.session_state.project_goals if g['date'] >= today]
@@ -508,30 +518,31 @@ with main_col:
         with c2:
             st.markdown("##### 🚀 즐겨찾기 추가")
             if st.session_state.favorite_tasks:
-                # [안전한 로직] 텍스트 매칭 대신, 인덱스(순서)를 사용하여 정확한 객체 가져오기
-                fav_opts = [None] + list(range(len(st.session_state.favorite_tasks)))
-                
-                def format_fav_option(idx):
-                    if idx is None: return "선택하세요"
-                    t = st.session_state.favorite_tasks[idx]
-                    return f"[{t.get('category','-')}] {t['plan_time']} - {t['task']}"
-
-                sel_idx = st.selectbox("루틴 선택", fav_opts, format_func=format_fav_option, label_visibility="collapsed")
+                # [수정됨] 텍스트 매칭으로 찾기 (인덱스 밀림 방지)
+                fav_options = ["선택하세요"] + [f"[{t.get('category','-')}] {t['plan_time']} - {t['task']}" for t in st.session_state.favorite_tasks]
+                sel_fav_text = st.selectbox("루틴 선택", fav_options, label_visibility="collapsed")
                 
                 if st.button("추가", use_container_width=True):
-                    if sel_idx is not None:
-                        fav_obj = st.session_state.favorite_tasks[sel_idx]
-                        existing_times = [t['plan_time'] for t in st.session_state.tasks]
-                        if fav_obj['plan_time'] in existing_times:
-                            st.warning(f"⚠️ {fav_obj['plan_time']}에 이미 일정이 있습니다.")
-                        else:
-                            st.session_state.tasks.append({
-                                "plan_time": fav_obj['plan_time'], 
-                                "category": fav_obj.get('category', 'CTA 공부'),
-                                "task": fav_obj['task'], "accumulated": 0, 
-                                "last_start": None, "is_running": False
-                            })
-                            st.rerun()
+                    if sel_fav_text != "선택하세요":
+                        # 텍스트와 일치하는 객체 찾기
+                        found_fav = None
+                        for t in st.session_state.favorite_tasks:
+                            if f"[{t.get('category','-')}] {t['plan_time']} - {t['task']}" == sel_fav_text:
+                                found_fav = t
+                                break
+                        
+                        if found_fav:
+                            existing_times = [t['plan_time'] for t in st.session_state.tasks]
+                            if found_fav['plan_time'] in existing_times:
+                                st.warning(f"⚠️ {found_fav['plan_time']}에 이미 일정이 있습니다. (중복 방지)")
+                            else:
+                                st.session_state.tasks.append({
+                                    "plan_time": found_fav['plan_time'], 
+                                    "category": found_fav.get('category', 'CTA 공부'),
+                                    "task": found_fav['task'], "accumulated": 0, 
+                                    "last_start": None, "is_running": False
+                                })
+                                st.rerun()
 
         st.markdown("---")
         
