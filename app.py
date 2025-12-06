@@ -680,7 +680,7 @@ with main_col:
         st.session_state.target_time = st.number_input("목표 시간 (시간)", value=st.session_state.target_time, step=0.5)
         st.session_state.daily_reflection = st.text_area("✍️ 학습 일기 / 메모", value=st.session_state.daily_reflection, height=100)
         
-        # [수정됨] 하단 저장 버튼 로직 (멀티 목표 호환)
+       # [수정됨] 하단 저장 버튼 로직 (멀티 목표 호환)
         if st.button(f"💾 {sel_date} 기록 저장하기", type="primary", use_container_width=True):
             # 1. 현재 등록된 목표 중 가장 가까운 D-Day 계산
             today = datetime.date.today()
@@ -751,6 +751,7 @@ with chat_col:
             st.markdown(response)
         st.session_state.messages.append({"role": "assistant", "content": response})
         st.rerun()
+
 
 
 
