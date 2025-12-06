@@ -375,4 +375,71 @@ def render_daily_view():
                     if new_sub != t['할일_Sub'] or new_link != t['참고자료']:
                         t['할일_Sub'] = new_sub; t['참고자료'] = new_link
                     
-                    if st.button("🗑️ 삭제", key
+                    if st.button("🗑️ 삭제", key=f"del_{i}"):
+                        del st.session_state.tasks[i]; st.rerun()
+
+            if t['카테고리'] not in NON_STUDY_CATEGORIES: total_focus_sec += curr_dur
+
+    st.markdown("---")
+    st.subheader("📊 Daily Report")
+    st.session_state.master['total_time'] = total_focus_sec
+    hours = total_focus_sec / 3600
+    
+    k1, k2 = st.columns(2)
+    k1.metric("총 집중 시간", format_time(total_focus_sec))
+    k2.metric("평가", "Good" if hours >= 8 else "Fighting")
+    
+    st.session_state.master['reflection'] = st.text_area("✍️ 오늘의 회고", value=st.session_state.master['reflection'])
+    
+    if st.button("💾 모든 기록 저장하기", type="primary", use_container_width=True):
+        if save_day_data(sel_date, st.session_state.tasks, st.session_state.master):
+            st.success("✅ 저장되었습니다!")
+        else: st.error("❌ 저장 실패")
+
+# ---------------------------------------------------------
+# 6. 실행부 (Router)
+# ---------------------------------------------------------
+with st.sidebar:
+    st.title("🗂️ 메뉴")
+    if st.button("📝 Daily Planner", use_container_width=True): 
+        st.session_state.view_mode = "Daily View"; st.rerun()
+    if st.button("📊 Dashboard", use_container_width=True): 
+        st.session_state.view_mode = "Dashboard"; st.rerun()
+        
+    st.markdown("---")
+    st.subheader("🎯 목표")
+    if st.session_state.project_goals:
+        today = datetime.date.today()
+        for g in st.session_state.project_goals:
+            delta = (datetime.datetime.strptime(g['date'], '%Y-%m-%d').date() - today).days
+            d_str = f"D-{delta}" if delta >= 0 else f"D+{-delta}"
+            st.caption(f"**{g['name']}** ({d_str})")
+    if st.button("목표 설정"): goal_manager()
+    
+    st.markdown("---")
+    if st.button(f"📥 Inbox ({len(st.session_state.inbox_items)})", use_container_width=True): manage_inbox_modal()
+    
+    # [템플릿 관리자 버튼]
+    if st.button("💾 템플릿 관리", use_container_width=True): manage_templates_modal()
+
+    st.markdown("---")
+    with st.expander("⚙️ 고급 설정"):
+        tel_id = st.text_input("텔레그램 ID", value=st.session_state.telegram_id)
+        if st.button("ID 저장"):
+            st.session_state.telegram_id = tel_id
+            save_setting("telegram_id", tel_id)
+
+if st.session_state.view_mode == "Daily View":
+    render_daily_view()
+    
+elif st.session_state.view_mode == "Dashboard":
+    st.title("📊 대시보드")
+    client = get_client()
+    if client:
+        try:
+            df = pd.DataFrame(client.open("CTA_Study_Data").worksheet("Daily_Master").get_all_records())
+            if not df.empty:
+                st.subheader("📅 집중 시간 추이")
+                st.line_chart(df, x="날짜", y="총집중시간(초)")
+            else: st.info("데이터 없음")
+        except: st.error("데이터 로드 실패")
