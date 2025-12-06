@@ -24,13 +24,6 @@ NON_STUDY_TASKS = [
 PROJECT_CATEGORIES = ["CTA 공부", "업무/사업", "건강/운동", "기타/생활"]
 CATEGORY_COLORS = {"CTA 공부": "blue", "업무/사업": "orange", "건강/운동": "green", "기타/생활": "gray"}
 
-네, 전체를 다 갈아엎을 필요 없습니다! 말씀하신 대로 헬퍼 함수와 세션 초기화 부분만 딱 교체하면 효율적으로 DB 구조를 변경할 수 있습니다.
-
-기존 코드에서 # --- 2. 헬퍼 함수 --- 부터 # --- 4. 사이드바 --- 전까지의 구간을 아래 코드로 덮어씌워 주세요.
-
-🛠️ 교체할 코드 구간 (헬퍼 함수 + 세션 초기화)
-Python
-
 # --- 2. 헬퍼 함수 ---
 @st.cache_resource(ttl=3600)
 def get_gspread_client():
@@ -222,6 +215,15 @@ if 'settings_loaded' not in st.session_state:
     st.session_state.inbox_items = settings['inbox_items']
     st.session_state.favorite_tasks = settings['favorite_tasks']
     st.session_state.settings_loaded = True
+
+# 뷰 모드 및 날짜 초기화 (기존 로직)
+if 'view_mode' not in st.session_state: st.session_state.view_mode = "Daily View (플래너)"
+if 'selected_date' not in st.session_state: st.session_state.selected_date = datetime.date.today()
+if 'cal_year' not in st.session_state: st.session_state.cal_year = datetime.date.today().year
+if 'cal_month' not in st.session_state: st.session_state.cal_month = datetime.date.today().month
+if 'tasks' not in st.session_state: st.session_state.tasks = get_default_tasks()
+
+# --- (여기까지 교체) ---
 
 # 뷰 모드 및 날짜 초기화 (기존 로직)
 if 'view_mode' not in st.session_state: st.session_state.view_mode = "Daily View (플래너)"
@@ -749,5 +751,6 @@ with chat_col:
             st.markdown(response)
         st.session_state.messages.append({"role": "assistant", "content": response})
         st.rerun()
+
 
 
