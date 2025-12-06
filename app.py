@@ -11,7 +11,9 @@ try:
 except ImportError:
     def st_autorefresh(interval, key): pass
 
-# --- 1. 앱 기본 설정 ---
+# ---------------------------------------------------------
+# 1. 앱 기본 설정
+# ---------------------------------------------------------
 st.set_page_config(page_title="CTA 합격 메이커", page_icon="📝", layout="wide")
 
 # [설정] 순공 시간에서 제외할 활동 리스트
@@ -24,7 +26,9 @@ NON_STUDY_TASKS = [
 PROJECT_CATEGORIES = ["CTA 공부", "업무/사업", "건강/운동", "기타/생활"]
 CATEGORY_COLORS = {"CTA 공부": "blue", "업무/사업": "orange", "건강/운동": "green", "기타/생활": "gray"}
 
-# --- 2. 헬퍼 함수 ---
+# ---------------------------------------------------------
+# 2. 헬퍼 함수 (DB 및 데이터 처리)
+# ---------------------------------------------------------
 @st.cache_resource(ttl=3600)
 def get_gspread_client():
     if "gcp_service_account" not in st.secrets: return None
@@ -34,7 +38,6 @@ def get_gspread_client():
     client = gspread.authorize(creds)
     return client
 
-# [기존 유지] 기본 태스크 생성 함수
 def get_default_tasks():
     return [
         {"plan_time": "08:00", "category": "CTA 공부", "task": "아침 백지 복습", "accumulated": 0, "last_start": None, "is_running": False},
@@ -45,10 +48,6 @@ def get_default_tasks():
 
 # [신규] 설정 데이터(Settings) 개별 저장 함수
 def update_setting(key, value):
-    """
-    Settings 시트에서 Key를 찾아 Value(JSON)를 업데이트.
-    없으면 'Settings' 시트를 생성하고 값을 추가함.
-    """
     try:
         client = get_gspread_client()
         if client is None: return False
@@ -57,12 +56,13 @@ def update_setting(key, value):
         try:
             sheet = client.open("CTA_Study_Data").worksheet("Settings")
         except:
-            sheet = client.open("CTA_Study_Data").add_worksheet(title="Settings", rows=100, cols=2)
-            sheet.append_row(["Key", "Value"])
+            try:
+                sheet = client.open("CTA_Study_Data").add_worksheet(title="Settings", rows=100, cols=2)
+                sheet.append_row(["Key", "Value"])
+            except: return False # 시트 생성 권한 없음 등
 
-        # 날짜 객체(date)는 JSON 직렬화가 안 되므로 문자열로 변환 처리
+        # JSON 직렬화 전 데이터 가공 (Date 객체 -> 문자열)
         if key == "project_goals":
-            # 리스트 내부의 date 객체를 문자열로 변환한 복사본 생성
             value_to_save = []
             for item in value:
                 item_copy = item.copy()
@@ -73,30 +73,26 @@ def update_setting(key, value):
         else:
             json_val = json.dumps(value, ensure_ascii=False)
         
-        # 시트에서 Key 검색
+        # 시트에서 Key 검색 및 업데이트
         try:
             cell = sheet.find(key)
-            # 존재하면 값 업데이트 (B열 = 2번째 컬럼)
             sheet.update_cell(cell.row, 2, json_val)
         except gspread.exceptions.CellNotFound:
-            # 없으면 새 행 추가
             sheet.append_row([key, json_val])
             
         return True
     except Exception as e:
-        st.error(f"설정 저장 실패: {e}")
+        print(f"설정 저장 실패: {e}")
         return False
 
-# [신규] 설정 데이터 로드 함수 (앱 시작 시 호출)
+# [신규] 설정 데이터 로드 함수
 def load_settings():
-    # 기본값 정의
     default_settings = {
         "telegram_id": "",
         "project_goals": [{"category": "CTA 공부", "name": "1차 시험", "date": datetime.date(2026, 4, 25)}],
         "inbox_items": [],
         "favorite_tasks": [
-            {"plan_time": "08:00", "category": "CTA 공부", "task": "아침 백지 복습", "key": "def_1"},
-            {"plan_time": "21:00", "category": "CTA 공부", "task": "당일 학습 백지 복습", "key": "def_2"}
+            {"plan_time": "09:00", "category": "CTA 공부", "task": "오전 학습 세션", "key": "def_1"},
         ]
     }
     
@@ -107,31 +103,27 @@ def load_settings():
         try:
             sheet = client.open("CTA_Study_Data").worksheet("Settings")
         except:
-            return default_settings # 시트가 없으면 기본값 반환
+            return default_settings
 
         records = sheet.get_all_records()
         for row in records:
             k = row.get('Key')
             v = row.get('Value')
-            
             if k in default_settings and v:
                 try:
                     loaded_val = json.loads(v)
-                    
-                    # 날짜 문자열 -> 객체 복원 (project_goals 전용)
+                    # 날짜 객체 복원
                     if k == 'project_goals':
                         for g in loaded_val:
                             if isinstance(g.get('date'), str):
                                 g['date'] = datetime.datetime.strptime(g['date'], '%Y-%m-%d').date()
-                    
                     default_settings[k] = loaded_val
                 except: pass
-                
         return default_settings
     except:
         return default_settings
 
-# [기존 유지] 데일리 로그 저장 함수
+# [기존] 데일리 로그 저장
 def save_to_google_sheets(date, total_seconds, status, wakeup_success, tasks, target_time, d_day_date, favorite_tasks, daily_reflection):
     try:
         client = get_gspread_client()
@@ -148,10 +140,8 @@ def save_to_google_sheets(date, total_seconds, status, wakeup_success, tasks, ta
         st.error(f"저장 실패: {e}")
         return False
 
-# [기존 유지] 일자별 데이터 로드 (Settings와 별개로, 해당 날짜의 기록 로드용)
 def load_data_for_date(target_date):
     client = get_gspread_client()
-    # 기본 템플릿만 반환 (설정값은 session_state에 이미 로드됨)
     data = {
         'tasks': get_default_tasks(),
         'target_time': 10.0,
@@ -164,7 +154,6 @@ def load_data_for_date(target_date):
     try:
         sheet = client.open("CTA_Study_Data").sheet1 
         records = sheet.get_all_records()
-        
         if records:
             df = pd.DataFrame(records)
             target_str = target_date.strftime('%Y-%m-%d')
@@ -185,7 +174,6 @@ def load_data_for_date(target_date):
                 if last_record.get('기상성공여부') == '성공': data['wakeup_checked'] = True
                 try: data['target_time'] = float(last_record.get('Target_Time', 10.0))
                 except: pass
-
         return data
     except: return data
 
@@ -206,8 +194,10 @@ def go_to_daily(date):
     st.session_state.view_mode = "Daily View (플래너)"
     st.rerun()
 
-# --- 3. 세션 초기화 (DB 연동 적용) ---
-# [핵심] 앱 시작 시 딱 한 번 Settings 로드
+# ---------------------------------------------------------
+# 3. 세션 초기화 (DB 연동)
+# ---------------------------------------------------------
+# 앱 시작 시 한 번만 Settings 로드
 if 'settings_loaded' not in st.session_state:
     settings = load_settings()
     st.session_state.telegram_id = settings['telegram_id']
@@ -216,55 +206,38 @@ if 'settings_loaded' not in st.session_state:
     st.session_state.favorite_tasks = settings['favorite_tasks']
     st.session_state.settings_loaded = True
 
-# 뷰 모드 및 날짜 초기화 (기존 로직)
 if 'view_mode' not in st.session_state: st.session_state.view_mode = "Daily View (플래너)"
 if 'selected_date' not in st.session_state: st.session_state.selected_date = datetime.date.today()
 if 'cal_year' not in st.session_state: st.session_state.cal_year = datetime.date.today().year
 if 'cal_month' not in st.session_state: st.session_state.cal_month = datetime.date.today().month
 if 'tasks' not in st.session_state: st.session_state.tasks = get_default_tasks()
 
-# --- (여기까지 교체) ---
 
-# 뷰 모드 및 날짜 초기화 (기존 로직)
-if 'view_mode' not in st.session_state: st.session_state.view_mode = "Daily View (플래너)"
-if 'selected_date' not in st.session_state: st.session_state.selected_date = datetime.date.today()
-if 'cal_year' not in st.session_state: st.session_state.cal_year = datetime.date.today().year
-if 'cal_month' not in st.session_state: st.session_state.cal_month = datetime.date.today().month
-if 'tasks' not in st.session_state: st.session_state.tasks = get_default_tasks()
-
-# [멀티 목표 관리 세션]
-if 'project_goals' not in st.session_state:
-    st.session_state.project_goals = [
-        {"category": "CTA 공부", "name": "1차 시험", "date": datetime.date(2026, 4, 25)}
-    ]
-
-
-# --- 4. 팝업 및 기능 로직 ---
-
-# [팝업 1] Inbox 통합 관리자 (수정됨: 조회+삭제+추가)
+# ---------------------------------------------------------
+# 4. 팝업(Dialog) 정의
+# ---------------------------------------------------------
 @st.dialog("📥 Inbox 관리", width="large")
 def manage_inbox_modal():
     st.caption("생각나는 아이디어나 할 일을 보관하고 관리하세요.")
     
-    # 1. 보관함 목록 출력
+    # 목록 출력
     if st.session_state.inbox_items:
         st.write("###### 📋 보관된 항목")
         for i, item in enumerate(st.session_state.inbox_items):
-            # 레이아웃: 내용 | 삭제버튼
             c1, c2, c3 = st.columns([1, 4, 1], vertical_alignment="center")
             c1.caption(f"[{item['category']}]")
             c2.write(f"**{item['task']}**")
-            if item.get('memo'):
-                c2.caption(f"└ {item['memo']}")
+            if item.get('memo'): c2.caption(f"└ {item['memo']}")
             
             if c3.button("삭제", key=f"rm_inbox_pop_{i}"):
                  del st.session_state.inbox_items[i]
+                 update_setting("inbox_items", st.session_state.inbox_items) # DB 즉시 저장
                  st.rerun()
             st.divider()
     else:
         st.info("보관함이 비어있습니다.")
 
-    # 2. 새 항목 추가 폼
+    # 추가 폼
     st.write("###### ➕ 새 항목 추가")
     with st.form("inbox_add_form", clear_on_submit=True):
         c1, c2 = st.columns([1, 2])
@@ -277,17 +250,14 @@ def manage_inbox_modal():
         
         if st.form_submit_button("보관함에 저장"):
             new_item = {
-                "category": cat,
-                "task": task_name,
-                "priority": priority,
-                "memo": memo,
+                "category": cat, "task": task_name, "priority": priority, "memo": memo,
                 "created_at": str(datetime.datetime.now())
             }
             st.session_state.inbox_items.append(new_item)
-            st.toast(f"✅ Inbox에 저장됨: {task_name}")
+            update_setting("inbox_items", st.session_state.inbox_items) # DB 즉시 저장
+            st.toast(f"✅ Inbox 저장 완료!")
             st.rerun()
 
-# [팝업 2] 목표(D-Day) 관리 모달
 @st.dialog("🎯 목표(D-Day) 관리")
 def show_goal_manager():
     st.write("프로젝트별 주요 목표일을 관리하세요.")
@@ -299,9 +269,10 @@ def show_goal_manager():
             c2.write(f"{goal['name']} ({goal['date']})")
             if c3.button("삭제", key=f"del_goal_{i}"):
                 del st.session_state.project_goals[i]
+                # DB 저장 (Date 객체 -> 문자열 변환 처리 로직 포함된 update_setting 호출)
+                update_setting("project_goals", st.session_state.project_goals)
                 st.rerun()
-    else:
-        st.info("등록된 목표가 없습니다.")
+    else: st.info("등록된 목표가 없습니다.")
 
     st.markdown("---")
     st.write("###### ➕ 새 목표 추가")
@@ -312,16 +283,17 @@ def show_goal_manager():
         d_date = st.date_input("목표 날짜", key="goal_date")
         
         if st.form_submit_button("목표 등록"):
-            st.session_state.project_goals.append({
-                "category": cat,
-                "name": name,
-                "date": d_date
-            })
+            st.session_state.project_goals.append({"category": cat, "name": name, "date": d_date})
             st.session_state.project_goals.sort(key=lambda x: x['date'])
+            update_setting("project_goals", st.session_state.project_goals) # DB 즉시 저장
             st.rerun()
 
-# [기능] 저장 로직
 def perform_save(target_mode=None):
+    # 저장 전 메인 D-Day 계산
+    today = datetime.date.today()
+    future_goals = [g for g in st.session_state.project_goals if g['date'] >= today]
+    main_d_day = min(future_goals, key=lambda x: x['date'])['date'] if future_goals else today
+
     cur_total = 0
     for t in st.session_state.tasks:
         if t['task'] not in NON_STUDY_TASKS:
@@ -331,10 +303,6 @@ def perform_save(target_mode=None):
     cur_hours = cur_total / 3600
     cur_status = get_status_color(cur_hours, st.session_state.target_time)
     
-    today = datetime.date.today()
-    future_goals = [g for g in st.session_state.project_goals if g['date'] >= today]
-    main_d_day = future_goals[0]['date'] if future_goals else today
-
     success = save_to_google_sheets(
         st.session_state.selected_date, cur_total, cur_status, st.session_state.wakeup_checked, 
         st.session_state.tasks, st.session_state.target_time, main_d_day, 
@@ -348,24 +316,23 @@ def perform_save(target_mode=None):
             st.rerun()
     else: st.error("저장 실패")
 
-# [팝업 3] 페이지 이동 확인
 @st.dialog("페이지 이동 확인")
 def confirm_navigation_modal(target_mode):
-    st.write("저장하지 않은 내용은 사라집니다.")
-    st.write("저장하고 이동하시겠습니까?")
-    col1, col2, col3 = st.columns(3)
-    with col1:
-        if st.button("💾 저장 후 이동", use_container_width=True):
-            perform_save(target_mode)
-    with col2:
+    st.write("저장하지 않은 내용은 사라집니다. 이동하시겠습니까?")
+    c1, c2, c3 = st.columns(3)
+    with c1:
+        if st.button("💾 저장 & 이동", use_container_width=True): perform_save(target_mode)
+    with c2:
         if st.button("이동만 하기", use_container_width=True):
             st.session_state.view_mode = target_mode
             st.rerun()
-    with col3:
-        if st.button("취소", use_container_width=True):
-            st.rerun()
+    with c3:
+        if st.button("취소", use_container_width=True): st.rerun()
 
-# --- 5. 사이드바 UI ---
+
+# ---------------------------------------------------------
+# 5. 사이드바 UI
+# ---------------------------------------------------------
 with st.sidebar:
     st.title("🗂️ 메뉴")
     
@@ -382,41 +349,36 @@ with st.sidebar:
     
     st.markdown("---")
     
-    # [Inbox] 통합 관리 버튼 (개수 표시)
-    inbox_count = len(st.session_state.inbox_items)
-    if st.button(f"📥 Inbox 관리 ({inbox_count})", use_container_width=True):
-        manage_inbox_modal() # 팝업 호출
+    # [Inbox]
+    inbox_cnt = len(st.session_state.inbox_items)
+    if st.button(f"📥 Inbox 관리 ({inbox_cnt})", use_container_width=True):
+        manage_inbox_modal()
 
-    # [목표 관리] (수정됨: 모든 목표 노출)
+    # [목표 및 설정] (Daily View 전용)
     if st.session_state.view_mode == "Daily View (플래너)":
         st.markdown("---")
         st.subheader("🎯 목표 (D-Day)")
-        
         today = datetime.date.today()
-        # 모든 목표 표시
         if st.session_state.project_goals:
             for g in st.session_state.project_goals:
                 delta = (g['date'] - today).days
                 d_str = f"D-{delta}" if delta > 0 else (f"D+{-delta}" if delta < 0 else "D-Day")
-                
-                # 색상으로 구분
                 cat_color = CATEGORY_COLORS.get(g['category'], "gray")
                 st.markdown(f":{cat_color}[**{g['name']}**]")
                 st.caption(f"{d_str} ({g['date']})")
-        else:
-            st.caption("등록된 목표가 없습니다.")
-            
+        else: st.caption("등록된 목표 없음")
+        
         if st.button("목표 설정", use_container_width=True):
             show_goal_manager()
 
         st.markdown("---")
         
-        # [데이터 로드 로직]
+        # 날짜 변경 감지 및 데이터 로드
         if 'loaded_date' not in st.session_state or st.session_state.loaded_date != st.session_state.selected_date:
             data = load_data_for_date(st.session_state.selected_date)
             st.session_state.tasks = data['tasks']
             st.session_state.target_time = data['target_time']
-            st.session_state.favorite_tasks = data['favorites']
+            # favorite_tasks는 DB(Settings)에서 로드한 값을 유지하므로 덮어쓰지 않음
             st.session_state.daily_reflection = data['daily_reflection']
             st.session_state.wakeup_checked = data['wakeup_checked']
             st.session_state.loaded_date = st.session_state.selected_date
@@ -428,12 +390,11 @@ with st.sidebar:
             f_task = st.text_input("루틴 내용")
             if st.form_submit_button("루틴 생성"):
                 st.session_state.favorite_tasks.append({
-                    "category": f_cat,
-                    "plan_time": f_time.strftime("%H:%M"), 
-                    "task": f_task, 
-                    "key": f"{time.time()}"
+                    "category": f_cat, "plan_time": f_time.strftime("%H:%M"), 
+                    "task": f_task, "key": f"{time.time()}"
                 })
                 st.session_state.favorite_tasks.sort(key=lambda x: x['plan_time'])
+                update_setting("favorite_tasks", st.session_state.favorite_tasks) # DB 저장
                 st.rerun()
         
         if st.session_state.favorite_tasks:
@@ -443,28 +404,32 @@ with st.sidebar:
                 if del_target != "선택하세요":
                     idx = fav_list.index(del_target)
                     del st.session_state.favorite_tasks[idx]
+                    update_setting("favorite_tasks", st.session_state.favorite_tasks) # DB 저장
                     st.rerun()
 
+    # [텔레그램 설정]
     st.markdown("---")
-    with st.expander("⚙️ 사용자 설정 (알림)", expanded=False):
-        st.session_state.telegram_id = st.text_input("텔레그램 ID", value=st.session_state.telegram_id, placeholder="숫자 ID 입력")
+    with st.expander("⚙️ 사용자 설정", expanded=False):
+        st.session_state.telegram_id = st.text_input("텔레그램 ID", value=st.session_state.telegram_id)
         if st.button("ID 저장"):
-            st.toast("텔레그램 ID가 설정되었습니다.")
+            update_setting("telegram_id", st.session_state.telegram_id)
+            st.toast("저장되었습니다.")
 
 
-# --- 6. 메인 UI 레이아웃 ---
+# ---------------------------------------------------------
+# 6. 메인 화면 구성
+# ---------------------------------------------------------
 main_col, chat_col = st.columns([2.3, 1])
 
 with main_col:
-    # [VIEW 1] Monthly View (캘린더)
+    # [VIEW 1] Monthly View
     if st.session_state.view_mode == "Monthly View (캘린더)":
         st.title("📅 월간 스케줄")
         col_prev, col_curr, col_next = st.columns([1, 5, 1])
         with col_prev:
             if st.button("◀"):
                 if st.session_state.cal_month == 1:
-                    st.session_state.cal_month = 12
-                    st.session_state.cal_year -= 1
+                    st.session_state.cal_month = 12; st.session_state.cal_year -= 1
                 else: st.session_state.cal_month -= 1
                 st.rerun()
         with col_curr:
@@ -472,11 +437,11 @@ with main_col:
         with col_next:
             if st.button("▶"):
                 if st.session_state.cal_month == 12:
-                    st.session_state.cal_month = 1
-                    st.session_state.cal_year += 1
+                    st.session_state.cal_month = 1; st.session_state.cal_year += 1
                 else: st.session_state.cal_month += 1
                 st.rerun()
 
+        # 캘린더 데이터 로드 및 표시 로직 (생략 없이 유지)
         status_map = {}
         try:
             client = get_gspread_client()
@@ -486,8 +451,7 @@ with main_col:
                 if records:
                     df = pd.DataFrame(records)
                     df_latest = df.groupby('날짜').last().reset_index()
-                    for _, row in df_latest.iterrows():
-                        status_map[row['날짜']] = row['상태']
+                    for _, row in df_latest.iterrows(): status_map[row['날짜']] = row['상태']
         except: pass
 
         cal = calendar.monthcalendar(st.session_state.cal_year, st.session_state.cal_month)
@@ -509,24 +473,21 @@ with main_col:
                     if cols[i].button(f"{day} {status_icon}", key=f"cal_{day}", use_container_width=True):
                         go_to_daily(curr_date)
 
-    # [VIEW 2] Daily View (플래너)
+    # [VIEW 2] Daily View
     elif st.session_state.view_mode == "Daily View (플래너)":
         if any(t.get('is_running') for t in st.session_state.tasks):
             st_autorefresh(interval=1000, key="timer_refresh")
 
         sel_date = st.session_state.selected_date
         
-        # [헤더] 오늘 날짜 + 가장 가까운 D-Day
+        # 헤더: 가장 가까운 목표 표시
         today = datetime.date.today()
         future_goals = [g for g in st.session_state.project_goals if g['date'] >= today]
-        
         if future_goals:
             primary_goal = min(future_goals, key=lambda x: x['date'])
             d_day_delta = (primary_goal['date'] - sel_date).days
-            if d_day_delta > 0: d_day_str = f"D-{d_day_delta}"
-            elif d_day_delta == 0: d_day_str = "D-Day"
-            else: d_day_str = f"D+{-d_day_delta}"
-            header_text = f"📝 {sel_date.strftime('%Y-%m-%d')} ({primary_goal['name']} {d_day_str})"
+            d_str = f"D-{d_day_delta}" if d_day_delta >= 0 else f"D+{-d_day_delta}"
+            header_text = f"📝 {sel_date.strftime('%Y-%m-%d')} ({primary_goal['name']} {d_str})"
         else:
             header_text = f"📝 {sel_date.strftime('%Y-%m-%d')} (목표 설정 필요)"
 
@@ -553,54 +514,47 @@ with main_col:
                 
                 if st.button("추가", use_container_width=True):
                     if sel_fav_label != "선택하세요":
-                        target_index = fav_labels.index(sel_fav_label)
-                        fav_obj = st.session_state.favorite_tasks[target_index]
-                        
+                        target_idx = fav_labels.index(sel_fav_label)
+                        fav_obj = st.session_state.favorite_tasks[target_idx]
                         existing_times = [t['plan_time'] for t in st.session_state.tasks]
                         if fav_obj['plan_time'] in existing_times:
-                            st.warning(f"⚠️ {fav_obj['plan_time']}에 이미 일정이 있습니다.")
+                            st.warning(f"⚠️ {fav_obj['plan_time']} 중복")
                         else:
                             st.session_state.tasks.append({
                                 "plan_time": fav_obj['plan_time'], 
                                 "category": fav_obj.get('category', 'CTA 공부'),
-                                "task": fav_obj['task'], 
-                                "accumulated": 0, 
-                                "last_start": None, 
-                                "is_running": False
+                                "task": fav_obj['task'], "accumulated": 0, 
+                                "last_start": None, "is_running": False
                             })
                             st.rerun()
 
         st.markdown("---")
         
-        # [수동 추가 섹션]
+        # 수동 추가
         with st.container():
-            st.caption("➕ 할 일 등록 (카테고리 분류)")
+            st.caption("➕ 할 일 등록")
             c1, c2, c3, c4 = st.columns([1, 1.5, 3, 1], vertical_alignment="bottom")
             with c1: input_time = st.time_input("시작", value=datetime.time(9,0))
             with c2: input_cat = st.selectbox("프로젝트", PROJECT_CATEGORIES, label_visibility="visible")
-            with c3: input_task = st.text_input("내용", placeholder="업무/학습 내용")
+            with c3: input_task = st.text_input("내용", placeholder="내용 입력")
             with c4:
                 if st.button("등록", use_container_width=True):
-                    t_time_str = input_time.strftime("%H:%M")
                     st.session_state.tasks.append({
-                        "plan_time": t_time_str,
-                        "category": input_cat,
-                        "task": input_task,
-                        "accumulated": 0, "last_start": None, "is_running": False
+                        "plan_time": input_time.strftime("%H:%M"), "category": input_cat,
+                        "task": input_task, "accumulated": 0, "last_start": None, "is_running": False
                     })
                     st.rerun()
 
         st.markdown("---")
         
-        # [할 일 리스트 출력 및 제어]
+        # 할 일 리스트
         st.subheader("📋 오늘의 할 일")
         st.session_state.tasks.sort(key=lambda x: x['plan_time'])
         
         total_seconds = 0
         cat_stats = {cat: 0 for cat in PROJECT_CATEGORIES}
         
-        if not st.session_state.tasks:
-            st.info("👆 위 입력창에서 '등록' 버튼을 눌러 오늘의 할 일을 추가해보세요!")
+        if not st.session_state.tasks: st.info("등록된 할 일이 없습니다.")
 
         for i, task in enumerate(st.session_state.tasks):
             c_time, c_cat, c_task, c_timer, c_btn, c_del = st.columns([1.3, 1.2, 3.5, 1.2, 1, 0.5], vertical_alignment="center")
@@ -610,8 +564,7 @@ with main_col:
                 except: t_obj = datetime.time(0,0)
                 new_time = st.time_input("time", value=t_obj, key=f"time_{i}", label_visibility="collapsed", disabled=task['is_running'])
                 if new_time.strftime("%H:%M") != task['plan_time']:
-                    task['plan_time'] = new_time.strftime("%H:%M")
-                    st.rerun()
+                    task['plan_time'] = new_time.strftime("%H:%M"); st.rerun()
 
             with c_cat:
                 cat = task.get('category', 'CTA 공부')
@@ -631,19 +584,15 @@ with main_col:
                     if task.get('is_running'):
                         if st.button("⏹️ 중지", key=f"stop_{i}", use_container_width=True):
                             task['accumulated'] += time.time() - task['last_start']
-                            task['is_running'] = False
-                            st.rerun()
+                            task['is_running'] = False; st.rerun()
                     else:
                         if st.button("▶️ 시작", key=f"start_{i}", use_container_width=True, type="primary"):
-                            task['is_running'] = True
-                            task['last_start'] = time.time()
-                            st.rerun()
+                            task['is_running'] = True; task['last_start'] = time.time(); st.rerun()
                 else: st.caption("-")
                         
             with c_del:
                 if st.button("🗑️", key=f"del_{i}", disabled=task.get('is_running')):
-                    del st.session_state.tasks[i]
-                    st.rerun()
+                    del st.session_state.tasks[i]; st.rerun()
             
             if task['task'] not in NON_STUDY_TASKS:
                 current_dur = task['accumulated']
@@ -654,7 +603,7 @@ with main_col:
 
         st.markdown("---")
         
-        # [집중 리포트]
+        # 리포트 및 저장
         st.subheader("📊 오늘의 집중 리포트")
         total_hours = total_seconds / 3600
         target = st.session_state.target_time if st.session_state.target_time > 0 else 1 
@@ -673,43 +622,23 @@ with main_col:
                     color_name = CATEGORY_COLORS.get(cat, "gray")
                     st.caption(f":{color_name}[{cat}] : {format_time(sec)} ({ratio*100:.1f}%)")
                     st.progress(ratio)
-        else:
-            st.info("아직 집중 시간이 기록되지 않았습니다.")
+        else: st.info("아직 집중 시간이 기록되지 않았습니다.")
 
         st.divider()
         st.session_state.target_time = st.number_input("목표 시간 (시간)", value=st.session_state.target_time, step=0.5)
         st.session_state.daily_reflection = st.text_area("✍️ 학습 일기 / 메모", value=st.session_state.daily_reflection, height=100)
         
-       # [수정됨] 하단 저장 버튼 로직 (멀티 목표 호환)
+        # [수정된 저장 버튼] main_d_day 계산 로직 적용
         if st.button(f"💾 {sel_date} 기록 저장하기", type="primary", use_container_width=True):
-            # 1. 현재 등록된 목표 중 가장 가까운 D-Day 계산
             today = datetime.date.today()
-            # 미래의 목표들만 추림
             future_goals = [g for g in st.session_state.project_goals if g['date'] >= today]
+            main_d_day = min(future_goals, key=lambda x: x['date'])['date'] if future_goals else today
             
-            # 목표가 있으면 가장 가까운 날짜, 없으면 오늘 날짜를 저장
-            if future_goals:
-                main_d_day = min(future_goals, key=lambda x: x['date'])['date']
-            else:
-                main_d_day = today
-
-            # 2. save_to_google_sheets 함수에 계산된 main_d_day 전달
-            if save_to_google_sheets(
-                sel_date, 
-                total_seconds, 
-                get_status_color(total_hours, st.session_state.target_time), 
-                st.session_state.wakeup_checked, 
-                st.session_state.tasks, 
-                st.session_state.target_time, 
-                main_d_day,  # 여기가 수정됨 (st.session_state.d_day_date -> main_d_day)
-                st.session_state.favorite_tasks, 
-                st.session_state.daily_reflection
-            ):
+            if save_to_google_sheets(sel_date, total_seconds, get_status_color(total_hours, st.session_state.target_time), st.session_state.wakeup_checked, st.session_state.tasks, st.session_state.target_time, main_d_day, st.session_state.favorite_tasks, st.session_state.daily_reflection):
                 st.success("저장되었습니다!")
-            else: 
-                st.error("저장 실패")
+            else: st.error("저장 실패")
 
-    # [VIEW 3] Dashboard (대시보드)
+    # [VIEW 3] Dashboard
     elif st.session_state.view_mode == "Dashboard (대시보드)":
         st.title("📊 통합 대시보드")
         try:
@@ -735,7 +664,6 @@ with main_col:
                 else: st.info("아직 데이터가 없습니다.")
         except: st.error("데이터 로드 중 오류가 발생했습니다.")
 
-# --- 6. AI Chat ---
 with chat_col:
     st.header("💬 AI Chat")
     st.caption("공부 중 궁금한 점을 물어보세요.")
@@ -751,7 +679,3 @@ with chat_col:
             st.markdown(response)
         st.session_state.messages.append({"role": "assistant", "content": response})
         st.rerun()
-
-
-
-
