@@ -82,7 +82,7 @@ def update_setting(key, value):
             
         return True
     except Exception as e:
-        print(f"설정 저장 실패: {e}")
+        # print(f"설정 저장 실패: {e}") # 디버깅용
         return False
 
 # [신규] 설정 데이터 로드 함수
@@ -131,7 +131,7 @@ def save_to_google_sheets(date, total_seconds, status, wakeup_success, tasks, ta
         sheet = client.open("CTA_Study_Data").sheet1 
         
         tasks_json = json.dumps(tasks)
-        # favorites_json은 저장하되, 나중에 로드할 때는 무시함 (Settings가 우선)
+        # favorites_json은 호환성을 위해 저장만 하고 로드하진 않음
         favorites_json = json.dumps(favorite_tasks) 
         
         row = [str(date), round(total_seconds/3600, 2), status, "성공" if wakeup_success else "실패", tasks_json, target_time, str(d_day_date), favorites_json, daily_reflection]
@@ -141,7 +141,7 @@ def save_to_google_sheets(date, total_seconds, status, wakeup_success, tasks, ta
         st.error(f"저장 실패: {e}")
         return False
 
-# [수정됨] 일자별 데이터 로드 (즐겨찾기 덮어쓰기 방지)
+# [수정됨] 일자별 데이터 로드 (즐겨찾기 분리)
 def load_data_for_date(target_date):
     client = get_gspread_client()
     data = {
@@ -177,7 +177,7 @@ def load_data_for_date(target_date):
                 try: data['target_time'] = float(last_record.get('Target_Time', 10.0))
                 except: pass
                 
-                # [중요] 여기서 'favorites'는 로드하지 않습니다! (Settings 값 유지)
+                # [중요] favorite_tasks는 Settings에서 관리하므로 여기서 덮어쓰지 않음!
                 
         return data
     except: return data
@@ -202,7 +202,6 @@ def go_to_daily(date):
 # ---------------------------------------------------------
 # 3. 세션 초기화 (DB 연동)
 # ---------------------------------------------------------
-# 앱 시작 시 한 번만 Settings 로드
 if 'settings_loaded' not in st.session_state:
     settings = load_settings()
     st.session_state.telegram_id = settings['telegram_id']
@@ -224,8 +223,6 @@ if 'tasks' not in st.session_state: st.session_state.tasks = get_default_tasks()
 @st.dialog("📥 Inbox 관리", width="large")
 def manage_inbox_modal():
     st.caption("생각나는 아이디어나 할 일을 보관하고 관리하세요.")
-    
-    # 목록 출력
     if st.session_state.inbox_items:
         st.write("###### 📋 보관된 항목")
         for i, item in enumerate(st.session_state.inbox_items):
@@ -233,16 +230,13 @@ def manage_inbox_modal():
             c1.caption(f"[{item['category']}]")
             c2.write(f"**{item['task']}**")
             if item.get('memo'): c2.caption(f"└ {item['memo']}")
-            
             if c3.button("삭제", key=f"rm_inbox_pop_{i}"):
                  del st.session_state.inbox_items[i]
-                 update_setting("inbox_items", st.session_state.inbox_items) # DB 즉시 저장
+                 update_setting("inbox_items", st.session_state.inbox_items)
                  st.rerun()
             st.divider()
-    else:
-        st.info("보관함이 비어있습니다.")
+    else: st.info("보관함이 비어있습니다.")
 
-    # 추가 폼
     st.write("###### ➕ 새 항목 추가")
     with st.form("inbox_add_form", clear_on_submit=True):
         c1, c2 = st.columns([1, 2])
@@ -259,14 +253,13 @@ def manage_inbox_modal():
                 "created_at": str(datetime.datetime.now())
             }
             st.session_state.inbox_items.append(new_item)
-            update_setting("inbox_items", st.session_state.inbox_items) # DB 즉시 저장
+            update_setting("inbox_items", st.session_state.inbox_items)
             st.toast(f"✅ Inbox 저장 완료!")
             st.rerun()
 
 @st.dialog("🎯 목표(D-Day) 관리")
 def show_goal_manager():
     st.write("프로젝트별 주요 목표일을 관리하세요.")
-    
     if st.session_state.project_goals:
         for i, goal in enumerate(st.session_state.project_goals):
             c1, c2, c3 = st.columns([2, 2, 1], vertical_alignment="center")
@@ -289,11 +282,10 @@ def show_goal_manager():
         if st.form_submit_button("목표 등록"):
             st.session_state.project_goals.append({"category": cat, "name": name, "date": d_date})
             st.session_state.project_goals.sort(key=lambda x: x['date'])
-            update_setting("project_goals", st.session_state.project_goals) # DB 즉시 저장
+            update_setting("project_goals", st.session_state.project_goals)
             st.rerun()
 
 def perform_save(target_mode=None):
-    # 저장 전 메인 D-Day 계산
     today = datetime.date.today()
     future_goals = [g for g in st.session_state.project_goals if g['date'] >= today]
     main_d_day = min(future_goals, key=lambda x: x['date'])['date'] if future_goals else today
@@ -353,12 +345,10 @@ with st.sidebar:
     
     st.markdown("---")
     
-    # [Inbox]
     inbox_cnt = len(st.session_state.inbox_items)
     if st.button(f"📥 Inbox 관리 ({inbox_cnt})", use_container_width=True):
         manage_inbox_modal()
 
-    # [목표 및 설정] (Daily View 전용)
     if st.session_state.view_mode == "Daily View (플래너)":
         st.markdown("---")
         st.subheader("🎯 목표 (D-Day)")
@@ -377,12 +367,11 @@ with st.sidebar:
 
         st.markdown("---")
         
-        # 날짜 변경 감지 및 데이터 로드
+        # [데이터 로드] 즐겨찾기(Favorites)는 제외하고 로드
         if 'loaded_date' not in st.session_state or st.session_state.loaded_date != st.session_state.selected_date:
             data = load_data_for_date(st.session_state.selected_date)
             st.session_state.tasks = data['tasks']
             st.session_state.target_time = data['target_time']
-            # [중요] favorite_tasks는 여기서 덮어쓰지 않음! (Settings 값 유지)
             st.session_state.daily_reflection = data['daily_reflection']
             st.session_state.wakeup_checked = data['wakeup_checked']
             st.session_state.loaded_date = st.session_state.selected_date
@@ -398,20 +387,20 @@ with st.sidebar:
                     "task": f_task, "key": f"{time.time()}"
                 })
                 st.session_state.favorite_tasks.sort(key=lambda x: x['plan_time'])
-                update_setting("favorite_tasks", st.session_state.favorite_tasks) # DB 저장
+                update_setting("favorite_tasks", st.session_state.favorite_tasks)
                 st.rerun()
         
         if st.session_state.favorite_tasks:
-            fav_list = [f"[{t.get('category','-')}] {t['plan_time']} - {t['task']}" for t in st.session_state.favorite_tasks]
-            del_target = st.selectbox("삭제할 루틴", ["선택하세요"] + fav_list)
+            # 삭제용 리스트
+            fav_del_list = [f"[{t.get('category','-')}] {t['plan_time']} - {t['task']}" for t in st.session_state.favorite_tasks]
+            del_target = st.selectbox("삭제할 루틴", ["선택하세요"] + fav_del_list)
             if st.button("선택한 루틴 삭제"):
                 if del_target != "선택하세요":
-                    idx = fav_list.index(del_target)
+                    idx = fav_del_list.index(del_target)
                     del st.session_state.favorite_tasks[idx]
-                    update_setting("favorite_tasks", st.session_state.favorite_tasks) # DB 저장
+                    update_setting("favorite_tasks", st.session_state.favorite_tasks)
                     st.rerun()
 
-    # [텔레그램 설정]
     st.markdown("---")
     with st.expander("⚙️ 사용자 설정", expanded=False):
         st.session_state.telegram_id = st.text_input("텔레그램 ID", value=st.session_state.telegram_id)
@@ -445,7 +434,6 @@ with main_col:
                 else: st.session_state.cal_month += 1
                 st.rerun()
 
-        # 캘린더 데이터 로드 및 표시 로직 (생략 없이 유지)
         status_map = {}
         try:
             client = get_gspread_client()
@@ -478,49 +466,35 @@ with main_col:
                         go_to_daily(curr_date)
 
     # [VIEW 2] Daily View
-# [VIEW 2] Daily View (플래너)
     elif st.session_state.view_mode == "Daily View (플래너)":
         if any(t.get('is_running') for t in st.session_state.tasks):
             st_autorefresh(interval=1000, key="timer_refresh")
 
         sel_date = st.session_state.selected_date
         today = datetime.date.today()
-        
-        # 1. 미래의 목표들만 추려냄
         future_goals = [g for g in st.session_state.project_goals if g['date'] >= today]
         
-        # 2. 헤더 텍스트 구성 (가장 급한 것 1개만 강조)
         if future_goals:
             primary_goal = min(future_goals, key=lambda x: x['date'])
             d_day_delta = (primary_goal['date'] - sel_date).days
-            
-            if d_day_delta > 0: d_str = f"D-{d_day_delta}"
-            elif d_day_delta == 0: d_str = "D-Day"
-            else: d_str = f"D+{-d_day_delta}" # 과거 날짜 조회 시
-            
+            d_str = f"D-{d_day_delta}" if d_day_delta >= 0 else f"D+{-d_day_delta}"
             header_text = f"📝 {sel_date.strftime('%Y-%m-%d')} ({primary_goal['name']} {d_str})"
         else:
-            header_text = f"📝 {sel_date.strftime('%Y-%m-%d')}"
+            header_text = f"📝 {sel_date.strftime('%Y-%m-%d')} (목표 설정 필요)"
 
         curr_utc = datetime.datetime.utcnow()
         curr_kst = curr_utc + datetime.timedelta(hours=9)
         today_kst = curr_kst.date()
         
         st.title(header_text)
-
-        # [NEW] 3. 목표 현황판 (Metric) 추가
-        # 등록된 목표가 있다면 타이틀 바로 아래에 깔끔하게 보여줍니다.
+        
+        # 목표 현황판 (Metric)
         if st.session_state.project_goals:
-            # 최대 4개까지만 가로로 배치 (너무 많으면 줄바꿈 고려 필요)
             cols = st.columns(len(st.session_state.project_goals))
-            
             for i, goal in enumerate(st.session_state.project_goals):
                 delta = (goal['date'] - today).days
                 d_label = f"D-{delta}" if delta > 0 else (f"D+{-delta}" if delta < 0 else "D-Day")
-                
-                # delta가 3일 이내면 빨간색 강조, 아니면 일반
                 delta_color = "inverse" if delta <= 3 and delta >= 0 else "normal"
-                
                 with cols[i]:
                     st.metric(
                         label=f"[{goal['category']}] {goal['name']}",
@@ -528,10 +502,8 @@ with main_col:
                         delta=d_label,
                         delta_color=delta_color
                     )
-            st.divider() # 구분선으로 깔끔하게 분리
+            st.divider()
 
-        # ... (이하 루틴 체크 코드 등 기존 코드 계속) ...
-       
         c1, c2 = st.columns([1, 2])
         with c1:
             st.markdown("##### ☀️ 루틴 체크")
@@ -540,17 +512,19 @@ with main_col:
         with c2:
             st.markdown("##### 🚀 즐겨찾기 추가")
             if st.session_state.favorite_tasks:
-                fav_labels = []
-                for t in st.session_state.favorite_tasks:
-                    cat = t.get('category', '미지정')
-                    fav_labels.append(f"[{cat}] {t['plan_time']} - {t['task']}")
+                # [안전한 로직] 텍스트 매칭 대신, 인덱스(순서)를 사용하여 정확한 객체 가져오기
+                fav_opts = [None] + list(range(len(st.session_state.favorite_tasks)))
                 
-                sel_fav_label = st.selectbox("루틴 선택", ["선택하세요"] + fav_labels, label_visibility="collapsed")
+                def format_fav_option(idx):
+                    if idx is None: return "선택하세요"
+                    t = st.session_state.favorite_tasks[idx]
+                    return f"[{t.get('category','-')}] {t['plan_time']} - {t['task']}"
+
+                sel_idx = st.selectbox("루틴 선택", fav_opts, format_func=format_fav_option, label_visibility="collapsed")
                 
                 if st.button("추가", use_container_width=True):
-                    if sel_fav_label != "선택하세요":
-                        target_idx = fav_labels.index(sel_fav_label)
-                        fav_obj = st.session_state.favorite_tasks[target_idx]
+                    if sel_idx is not None:
+                        fav_obj = st.session_state.favorite_tasks[sel_idx]
                         existing_times = [t['plan_time'] for t in st.session_state.tasks]
                         if fav_obj['plan_time'] in existing_times:
                             st.warning(f"⚠️ {fav_obj['plan_time']} 중복")
@@ -663,7 +637,6 @@ with main_col:
         st.session_state.target_time = st.number_input("목표 시간 (시간)", value=st.session_state.target_time, step=0.5)
         st.session_state.daily_reflection = st.text_area("✍️ 학습 일기 / 메모", value=st.session_state.daily_reflection, height=100)
         
-        # [수정된 저장 버튼] main_d_day 계산 로직 적용
         if st.button(f"💾 {sel_date} 기록 저장하기", type="primary", use_container_width=True):
             today = datetime.date.today()
             future_goals = [g for g in st.session_state.project_goals if g['date'] >= today]
@@ -714,5 +687,3 @@ with chat_col:
             st.markdown(response)
         st.session_state.messages.append({"role": "assistant", "content": response})
         st.rerun()
-
-
