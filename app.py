@@ -24,6 +24,13 @@ NON_STUDY_TASKS = [
 PROJECT_CATEGORIES = ["CTA 공부", "업무/사업", "건강/운동", "기타/생활"]
 CATEGORY_COLORS = {"CTA 공부": "blue", "업무/사업": "orange", "건강/운동": "green", "기타/생활": "gray"}
 
+네, 전체를 다 갈아엎을 필요 없습니다! 말씀하신 대로 헬퍼 함수와 세션 초기화 부분만 딱 교체하면 효율적으로 DB 구조를 변경할 수 있습니다.
+
+기존 코드에서 # --- 2. 헬퍼 함수 --- 부터 # --- 4. 사이드바 --- 전까지의 구간을 아래 코드로 덮어씌워 주세요.
+
+🛠️ 교체할 코드 구간 (헬퍼 함수 + 세션 초기화)
+Python
+
 # --- 2. 헬퍼 함수 ---
 @st.cache_resource(ttl=3600)
 def get_gspread_client():
@@ -34,6 +41,7 @@ def get_gspread_client():
     client = gspread.authorize(creds)
     return client
 
+# [기존 유지] 기본 태스크 생성 함수
 def get_default_tasks():
     return [
         {"plan_time": "08:00", "category": "CTA 공부", "task": "아침 백지 복습", "accumulated": 0, "last_start": None, "is_running": False},
@@ -42,6 +50,95 @@ def get_default_tasks():
         {"plan_time": "21:00", "category": "CTA 공부", "task": "당일 학습 백지 복습", "accumulated": 0, "last_start": None, "is_running": False},
     ]
 
+# [신규] 설정 데이터(Settings) 개별 저장 함수
+def update_setting(key, value):
+    """
+    Settings 시트에서 Key를 찾아 Value(JSON)를 업데이트.
+    없으면 'Settings' 시트를 생성하고 값을 추가함.
+    """
+    try:
+        client = get_gspread_client()
+        if client is None: return False
+        
+        # 'Settings' 시트 열기 (없으면 생성)
+        try:
+            sheet = client.open("CTA_Study_Data").worksheet("Settings")
+        except:
+            sheet = client.open("CTA_Study_Data").add_worksheet(title="Settings", rows=100, cols=2)
+            sheet.append_row(["Key", "Value"])
+
+        # 날짜 객체(date)는 JSON 직렬화가 안 되므로 문자열로 변환 처리
+        if key == "project_goals":
+            # 리스트 내부의 date 객체를 문자열로 변환한 복사본 생성
+            value_to_save = []
+            for item in value:
+                item_copy = item.copy()
+                if isinstance(item_copy.get('date'), (datetime.date, datetime.datetime)):
+                    item_copy['date'] = str(item_copy['date'])
+                value_to_save.append(item_copy)
+            json_val = json.dumps(value_to_save, ensure_ascii=False)
+        else:
+            json_val = json.dumps(value, ensure_ascii=False)
+        
+        # 시트에서 Key 검색
+        try:
+            cell = sheet.find(key)
+            # 존재하면 값 업데이트 (B열 = 2번째 컬럼)
+            sheet.update_cell(cell.row, 2, json_val)
+        except gspread.exceptions.CellNotFound:
+            # 없으면 새 행 추가
+            sheet.append_row([key, json_val])
+            
+        return True
+    except Exception as e:
+        st.error(f"설정 저장 실패: {e}")
+        return False
+
+# [신규] 설정 데이터 로드 함수 (앱 시작 시 호출)
+def load_settings():
+    # 기본값 정의
+    default_settings = {
+        "telegram_id": "",
+        "project_goals": [{"category": "CTA 공부", "name": "1차 시험", "date": datetime.date(2026, 4, 25)}],
+        "inbox_items": [],
+        "favorite_tasks": [
+            {"plan_time": "08:00", "category": "CTA 공부", "task": "아침 백지 복습", "key": "def_1"},
+            {"plan_time": "21:00", "category": "CTA 공부", "task": "당일 학습 백지 복습", "key": "def_2"}
+        ]
+    }
+    
+    try:
+        client = get_gspread_client()
+        if client is None: return default_settings
+        
+        try:
+            sheet = client.open("CTA_Study_Data").worksheet("Settings")
+        except:
+            return default_settings # 시트가 없으면 기본값 반환
+
+        records = sheet.get_all_records()
+        for row in records:
+            k = row.get('Key')
+            v = row.get('Value')
+            
+            if k in default_settings and v:
+                try:
+                    loaded_val = json.loads(v)
+                    
+                    # 날짜 문자열 -> 객체 복원 (project_goals 전용)
+                    if k == 'project_goals':
+                        for g in loaded_val:
+                            if isinstance(g.get('date'), str):
+                                g['date'] = datetime.datetime.strptime(g['date'], '%Y-%m-%d').date()
+                    
+                    default_settings[k] = loaded_val
+                except: pass
+                
+        return default_settings
+    except:
+        return default_settings
+
+# [기존 유지] 데일리 로그 저장 함수
 def save_to_google_sheets(date, total_seconds, status, wakeup_success, tasks, target_time, d_day_date, favorite_tasks, daily_reflection):
     try:
         client = get_gspread_client()
@@ -58,17 +155,13 @@ def save_to_google_sheets(date, total_seconds, status, wakeup_success, tasks, ta
         st.error(f"저장 실패: {e}")
         return False
 
+# [기존 유지] 일자별 데이터 로드 (Settings와 별개로, 해당 날짜의 기록 로드용)
 def load_data_for_date(target_date):
     client = get_gspread_client()
-    default_favs = [
-        {"plan_time": "08:00", "category": "CTA 공부", "task": "아침 백지 복습", "key": "def_1"},
-        {"plan_time": "21:00", "category": "CTA 공부", "task": "당일 학습 백지 복습", "key": "def_2"}
-    ]
+    # 기본 템플릿만 반환 (설정값은 session_state에 이미 로드됨)
     data = {
         'tasks': get_default_tasks(),
         'target_time': 10.0,
-        'd_day_date': datetime.date(2026, 4, 25), 
-        'favorites': default_favs,
         'daily_reflection': "",
         'wakeup_checked': False
     }
@@ -82,8 +175,8 @@ def load_data_for_date(target_date):
         if records:
             df = pd.DataFrame(records)
             target_str = target_date.strftime('%Y-%m-%d')
-            
             day_records = df[df['날짜'] == target_str]
+            
             if not day_records.empty:
                 last_record = day_records.iloc[-1]
                 if last_record.get('Tasks_JSON'):
@@ -94,22 +187,10 @@ def load_data_for_date(target_date):
                             t['last_start'] = None
                         data['tasks'] = loaded_tasks
                     except: pass
-                else: data['tasks'] = []
                 
                 data['daily_reflection'] = last_record.get('Daily_Reflection', "")
                 if last_record.get('기상성공여부') == '성공': data['wakeup_checked'] = True
-
-            ref_record = last_record if not day_records.empty else df.iloc[-1]
-            try: data['target_time'] = float(ref_record.get('Target_Time', 10.0))
-            except: pass
-            
-            d_day_str = ref_record.get('DDay_Date')
-            if d_day_str:
-                try: data['d_day_date'] = datetime.datetime.strptime(str(d_day_str), '%Y-%m-%d').date()
-                except: pass
-                
-            if ref_record.get('Favorites_JSON'):
-                try: data['favorites'] = json.loads(ref_record['Favorites_JSON'])
+                try: data['target_time'] = float(last_record.get('Target_Time', 10.0))
                 except: pass
 
         return data
@@ -132,14 +213,22 @@ def go_to_daily(date):
     st.session_state.view_mode = "Daily View (플래너)"
     st.rerun()
 
-# --- 3. 세션 초기화 ---
-if 'view_mode' not in st.session_state: st.session_state.view_mode = "Monthly View (캘린더)"
+# --- 3. 세션 초기화 (DB 연동 적용) ---
+# [핵심] 앱 시작 시 딱 한 번 Settings 로드
+if 'settings_loaded' not in st.session_state:
+    settings = load_settings()
+    st.session_state.telegram_id = settings['telegram_id']
+    st.session_state.project_goals = settings['project_goals']
+    st.session_state.inbox_items = settings['inbox_items']
+    st.session_state.favorite_tasks = settings['favorite_tasks']
+    st.session_state.settings_loaded = True
+
+# 뷰 모드 및 날짜 초기화 (기존 로직)
+if 'view_mode' not in st.session_state: st.session_state.view_mode = "Daily View (플래너)"
 if 'selected_date' not in st.session_state: st.session_state.selected_date = datetime.date.today()
 if 'cal_year' not in st.session_state: st.session_state.cal_year = datetime.date.today().year
 if 'cal_month' not in st.session_state: st.session_state.cal_month = datetime.date.today().month
 if 'tasks' not in st.session_state: st.session_state.tasks = get_default_tasks()
-if 'inbox_items' not in st.session_state: st.session_state.inbox_items = []
-if 'telegram_id' not in st.session_state: st.session_state.telegram_id = ""
 
 # [멀티 목표 관리 세션]
 if 'project_goals' not in st.session_state:
@@ -660,4 +749,5 @@ with chat_col:
             st.markdown(response)
         st.session_state.messages.append({"role": "assistant", "content": response})
         st.rerun()
+
 
