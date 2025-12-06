@@ -59,7 +59,7 @@ def update_setting(key, value):
             try:
                 sheet = client.open("CTA_Study_Data").add_worksheet(title="Settings", rows=100, cols=2)
                 sheet.append_row(["Key", "Value"])
-            except: return False # 시트 생성 권한 없음 등
+            except: return False
 
         # JSON 직렬화 전 데이터 가공 (Date 객체 -> 문자열)
         if key == "project_goals":
@@ -131,6 +131,7 @@ def save_to_google_sheets(date, total_seconds, status, wakeup_success, tasks, ta
         sheet = client.open("CTA_Study_Data").sheet1 
         
         tasks_json = json.dumps(tasks)
+        # favorites_json은 저장하되, 나중에 로드할 때는 무시함 (Settings가 우선)
         favorites_json = json.dumps(favorite_tasks) 
         
         row = [str(date), round(total_seconds/3600, 2), status, "성공" if wakeup_success else "실패", tasks_json, target_time, str(d_day_date), favorites_json, daily_reflection]
@@ -140,6 +141,7 @@ def save_to_google_sheets(date, total_seconds, status, wakeup_success, tasks, ta
         st.error(f"저장 실패: {e}")
         return False
 
+# [수정됨] 일자별 데이터 로드 (즐겨찾기 덮어쓰기 방지)
 def load_data_for_date(target_date):
     client = get_gspread_client()
     data = {
@@ -174,6 +176,9 @@ def load_data_for_date(target_date):
                 if last_record.get('기상성공여부') == '성공': data['wakeup_checked'] = True
                 try: data['target_time'] = float(last_record.get('Target_Time', 10.0))
                 except: pass
+                
+                # [중요] 여기서 'favorites'는 로드하지 않습니다! (Settings 값 유지)
+                
         return data
     except: return data
 
@@ -269,7 +274,6 @@ def show_goal_manager():
             c2.write(f"{goal['name']} ({goal['date']})")
             if c3.button("삭제", key=f"del_goal_{i}"):
                 del st.session_state.project_goals[i]
-                # DB 저장 (Date 객체 -> 문자열 변환 처리 로직 포함된 update_setting 호출)
                 update_setting("project_goals", st.session_state.project_goals)
                 st.rerun()
     else: st.info("등록된 목표가 없습니다.")
@@ -378,7 +382,7 @@ with st.sidebar:
             data = load_data_for_date(st.session_state.selected_date)
             st.session_state.tasks = data['tasks']
             st.session_state.target_time = data['target_time']
-            # favorite_tasks는 DB(Settings)에서 로드한 값을 유지하므로 덮어쓰지 않음
+            # [중요] favorite_tasks는 여기서 덮어쓰지 않음! (Settings 값 유지)
             st.session_state.daily_reflection = data['daily_reflection']
             st.session_state.wakeup_checked = data['wakeup_checked']
             st.session_state.loaded_date = st.session_state.selected_date
