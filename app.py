@@ -531,12 +531,7 @@ with main_col:
             st.divider() # 구분선으로 깔끔하게 분리
 
         # ... (이하 루틴 체크 코드 등 기존 코드 계속) ...
-        curr_utc = datetime.datetime.utcnow()
-        curr_kst = curr_utc + datetime.timedelta(hours=9)
-        today_kst = curr_kst.date()
-        
-        st.title(header_text)
-        
+       
         c1, c2 = st.columns([1, 2])
         with c1:
             st.markdown("##### ☀️ 루틴 체크")
@@ -719,4 +714,5 @@ with chat_col:
             st.markdown(response)
         st.session_state.messages.append({"role": "assistant", "content": response})
         st.rerun()
+
 
