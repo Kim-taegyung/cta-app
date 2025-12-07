@@ -509,7 +509,7 @@ with st.sidebar:
     st.markdown("---")
     if st.button(f"📥 Inbox ({len(st.session_state.inbox_items)})", use_container_width=True): manage_inbox_modal()
     
-    if st.button("💼 업무 템플릿", use_container_width=True): manage_work_template_modal()
+    if st.button("💼 업무 리스트", use_container_width=True): manage_work_template_modal()
     if st.button("💾 템플릿 관리", use_container_width=True): manage_templates_modal()
 
     st.markdown("---")
@@ -575,3 +575,4 @@ with chat_col:
             ai_msg = {"role": "assistant", "content": resp}
             ai_msg.update(media)
             st.session_state.messages.append(ai_msg)
+
