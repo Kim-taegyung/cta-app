@@ -336,9 +336,11 @@ def format_time(seconds):
     return f"{h:02d}:{m:02d}:{s:02d}"
 
 def render_daily_view():
+    # 1. 타이머 리프레시 (1초마다)
     if any(t.get('is_running') for t in st.session_state.tasks):
         st_autorefresh(interval=1000, key="tick")
 
+    # 2. 데이터 로드 (날짜 변경 시)
     sel_date = st.session_state.selected_date
     if st.session_state.loaded_date != sel_date:
         data = load_day_data(sel_date)
@@ -346,6 +348,7 @@ def render_daily_view():
         st.session_state.master = data['master']
         st.session_state.loaded_date = sel_date
 
+    # 3. 헤더 (D-Day 표시)
     today = datetime.date.today()
     future = [g for g in st.session_state.project_goals if g['date'] >= str(today)]
     suffix = ""
@@ -358,13 +361,14 @@ def render_daily_view():
     
     st.title(f"📝 {sel_date.strftime('%Y-%m-%d')} {suffix}")
 
+    # 4. 상단 컨트롤 (기상, 학습 템플릿)
     c1, c2 = st.columns([1, 2], vertical_alignment="center")
     with c1:
         st.session_state.master['wakeup'] = st.checkbox("☀️ 7시 기상 성공!", value=st.session_state.master['wakeup'])
     with c2:
-        # [학습 템플릿] (세트 메뉴)
         templates = get_templates()
         if templates:
+            # 학습용(업무 제외) 템플릿만 필터링
             study_templates = [t for t in templates if t['카테고리'] != '업무/사업']
             t_names = sorted(list(set([t['템플릿명'] for t in study_templates])))
             
@@ -385,119 +389,148 @@ def render_daily_view():
     
     st.divider()
 
-    # [할 일 입력 + AI]
+    # 5. 할 일 입력 (업무 속성 추가됨)
     with st.expander("➕ 할 일 추가 / ✨ AI Copilot", expanded=True):
         c_ai1, c_ai2 = st.columns([3, 1], vertical_alignment="bottom")
         
         with st.form("add_tsk", clear_on_submit=False):
+            # 기본 정보
             c1, c2 = st.columns([1, 1])
-            i_time = c1.time_input("시작 시간", datetime.time(9,0))
-            i_cat = c2.selectbox("카테고리", PROJECT_CATEGORIES, key="add_cat")
+            i_time = c1.time_input("시작", datetime.time(9,0))
+            i_cat = c2.selectbox("카테고리", PROJECT_CATEGORIES)
+            i_main = st.text_input("메인 목표")
             
-            i_main = st.text_input("메인 목표 (Task)")
-            
-            # [NEW] 업무/사업 카테고리일 때만 추가 옵션 노출
+            # [NEW] 업무/사업일 때만 추가 옵션 (마감, 중요도)
             i_due = None
-            i_prio = "보통"
-            
+            i_prio = ""
             if i_cat == "업무/사업":
                 c3, c4 = st.columns(2)
-                i_due = c3.time_input("마감 시간 (선택)", value=None) # 선택사항
+                i_due = c3.time_input("마감 시간 (선택)", value=None)
                 i_prio = c4.selectbox("중요도", ["🔥 높음", "⚡ 보통", "☕ 낮음"], index=1)
-            
-            # AI 버튼은 form_submit_button이어야 함
+
+            # AI 버튼
             ai_clicked = st.form_submit_button("✨ AI 제안 받기")
             
-            # 세부 목표 필드
+            # 세부 내용
             def_sub = st.session_state.get("ai_suggestion_temp", "")
             i_sub = st.text_area("세부 목표", value=def_sub, height=100)
-            i_link = st.text_input("링크")
+            i_link = st.text_input("참고 링크")
             
-            # [등록 버튼 로직 수정]
-            if st.form_submit_button("등록", type="primary"):
-                # 업무 전용 데이터 추가
-                task_data = {
-                    "ID": str(uuid.uuid4()), 
-                    "시간": i_time.strftime("%H:%M"), 
-                    "카테고리": i_cat,
-                    "할일_Main": i_main, 
-                    "할일_Sub": i_sub, # (위에서 정의했다고 가정)
-                    "상태": "예정", 
-                    "소요시간(초)": 0, 
-                    "참고자료": i_link, 
-                    "accumulated": 0, 
-                    "is_running": False,
-                    # [NEW] 신규 필드
-                    "마감시간": i_due.strftime("%H:%M") if i_due else "",
-                    "중요도": i_prio if i_cat == "업무/사업" else "" 
-                }
-                st.session_state.tasks.append(task_data)
+            # 등록 버튼
+            submitted = st.form_submit_button("등록", type="primary")
+            
+            if ai_clicked:
+                st.session_state.ai_suggestion_temp = generate_ai_suggestion(i_cat, i_main)
                 st.rerun()
 
-    # [통계 변수 초기화 - 에러 방지]
+            if submitted:
+                # 데이터 생성
+                new_task = {
+                    "ID": str(uuid.uuid4()), "시간": i_time.strftime("%H:%M"), "카테고리": i_cat,
+                    "할일_Main": i_main, "할일_Sub": i_sub, "상태": "예정",
+                    "소요시간(초)": 0, "참고자료": i_link, "accumulated": 0, "is_running": False
+                }
+                # 업무 속성 추가
+                if i_cat == "업무/사업":
+                    new_task["마감시간"] = i_due.strftime("%H:%M") if i_due else ""
+                    new_task["중요도"] = i_prio
+                
+                st.session_state.tasks.append(new_task)
+                st.session_state.ai_suggestion_temp = ""
+                st.rerun()
+
+    # 6. 할 일 리스트 출력 (체크박스 & 삭제 & 스타일 적용)
     total_focus_sec = 0
     cat_stats = {cat: 0 for cat in PROJECT_CATEGORIES}
 
     if not st.session_state.tasks:
-        st.info("일정이 없습니다.")
+        st.info("등록된 일정이 없습니다.")
     else:
         st.session_state.tasks.sort(key=lambda x: x['시간'])
-for i, t in enumerate(st.session_state.tasks):
+        
+        for i, t in enumerate(st.session_state.tasks):
             cat_color = CATEGORY_COLORS.get(t['카테고리'], "gray")
             
-            # 완료된 일은 배경색을 어둡게 하거나 스타일 변경 (여기선 간단히 텍스트 장식 처리)
-            is_done = (t['상태'] == '완료')
+            # 완료 여부 확인
+            is_done = (t.get('상태') == '완료')
             
             with st.container(border=True):
-                # 레이아웃: 완료체크 | 시간 | 카테고리 | 내용(중요도) | 타이머 | 버튼 | 삭제
+                # 레이아웃: 체크박스 | 시간 | 카테고리 | 내용 | 타이머 | 버튼 | 삭제
                 c0, c1, c2, c3, c4, c5, c6 = st.columns([0.5, 1, 1.2, 3.5, 1.2, 1.5, 0.5], vertical_alignment="center")
                 
-                # [NEW] 1. 완료 체크박스
-                if c0.checkbox("done", value=is_done, key=f"done_{i}", label_visibility="collapsed"):
-                    if t['상태'] != '완료':
+                # [Check] 완료 체크박스
+                if c0.checkbox("done", value=is_done, key=f"chk_{i}", label_visibility="collapsed"):
+                    if t.get('상태') != '완료':
                         t['상태'] = '완료'
+                        # 타이머 돌고 있었다면 정지
+                        if t.get('is_running'):
+                            t['accumulated'] += (time.time() - t['last_start'])
+                            t['is_running'] = False
                         st.rerun()
-                elif t['상태'] == '완료': # 체크 해제 시 복구
-                     t['상태'] = '예정'
-                     st.rerun()
-
-                # 2. 시간 (마감 시간 있으면 표시)
-                time_display = t['시간']
-                if t.get('마감시간'):
-                    time_display += f"~{t['마감시간']}"
-                c1.text(time_display)
-                
-                # 3. 카테고리
-                c2.markdown(f":{cat_color}[**{t['카테고리']}**]")
-                
-                # [NEW] 4. 내용 (중요도 뱃지 포함 & 완료 시 취소선)
-                task_text = t['할일_Main']
-                if is_done:
-                    c3.markdown(f"~~{task_text}~~") # 취소선
-                else:
-                    # 중요도 표시
-                    prio_badge = f"`{t.get('중요도', '')}` " if t.get('중요도') else ""
-                    c3.markdown(f"{prio_badge}**{task_text}**")
-                
-                # (이하 타이머, 버튼, 삭제 로직은 기존 유지...)
-                # 단, 완료된 일은 타이머/버튼 숨기기
-                if not is_done:
-                    # ... 기존 타이머 로직 ...
-                    pass
-                else:
-                    c4.write("-")
-                    c5.write("🎉 완료")
-                
-                # 삭제 버튼 (항상 노출)
-                if c6.button("🗑️", key=f"del_{i}"):
-                    del st.session_state.tasks[i]
+                elif t.get('상태') == '완료': # 체크 해제 시
+                    t['상태'] = '예정'
                     st.rerun()
 
+                # [Time] 시간 표시 (마감시간 포함)
+                time_display = t['시간']
+                if t.get('마감시간'): time_display += f"~{t['마감시간']}"
+                c1.text(time_display)
+                
+                # [Cat] 카테고리
+                c2.markdown(f":{cat_color}[**{t['카테고리']}**]")
+                
+                # [Content] 내용 (완료 시 취소선, 업무 시 중요도 표시)
+                main_txt = t['할일_Main']
+                if is_done:
+                    c3.markdown(f"~~{main_txt}~~")
+                else:
+                    prio = f"`{t['중요도']}` " if t.get('중요도') else ""
+                    c3.markdown(f"{prio}**{main_txt}**")
+                
+                # [Timer] 타이머
+                if is_done:
+                    c4.write("-")
+                    c5.write("🎉 완료")
+                else:
+                    curr = t['accumulated']
+                    if t.get('is_running'): curr += (time.time() - t['last_start'])
+                    c4.markdown(f"⏱️ `{format_time(curr)}`")
+                    
+                    if sel_date == datetime.date.today():
+                        if t.get('is_running'):
+                            if c5.button("⏹️ 중지", key=f"stp_{i}", use_container_width=True):
+                                t['accumulated'] += (time.time() - t['last_start'])
+                                t['is_running'] = False; st.rerun()
+                        else:
+                            btn_label = "▶️ 시작"
+                            if t['카테고리'] == "업무/사업": btn_label = "🔥 착수"
+                            if c5.button(btn_label, key=f"str_{i}", use_container_width=True, type="primary"):
+                                t['is_running'] = True; t['last_start'] = time.time(); st.rerun()
+                    else: c5.caption("-")
+                
+                # [Delete] 삭제 버튼 (항상 노출)
+                if c6.button("🗑️", key=f"del_{i}"):
+                    del st.session_state.tasks[i]; st.rerun()
+
+                # [Detail] 세부 내용 펼치기
+                has_dt = bool(t['할일_Sub'] or t['참고자료'])
+                exp_lbl = "🔽 세부 내용" if has_dt else "🔽 추가"
+                with st.expander(exp_lbl):
+                    n_sub = st.text_area("세부 목표", value=t['할일_Sub'], key=f"sb_{i}")
+                    n_lnk = st.text_input("링크", value=t['참고자료'], key=f"lk_{i}")
+                    if n_sub != t['할일_Sub'] or n_lnk != t['참고자료']:
+                        t['할일_Sub'] = n_sub; t['참고자료'] = n_lnk
+
+            # 통계 집계 (완료 여부 상관없이 시간은 집계)
             if t['카테고리'] not in NON_STUDY_CATEGORIES:
-                total_focus_sec += curr
-                cat_stats[t['카테고리']] = cat_stats.get(t['카테고리'], 0) + curr
+                add_time = t['accumulated']
+                if t.get('is_running'): add_time += (time.time() - t['last_start'])
+                total_focus_sec += add_time
+                cat_stats[t['카테고리']] = cat_stats.get(t['카테고리'], 0) + add_time
 
     st.markdown("---")
+    
+    # 7. 하단 리포트 & 저장
     st.subheader("📊 Daily Report")
     st.session_state.master['total_time'] = total_focus_sec
     hours = total_focus_sec / 3600
@@ -608,6 +641,7 @@ with chat_col:
             ai_msg = {"role": "assistant", "content": resp}
             ai_msg.update(media)
             st.session_state.messages.append(ai_msg)
+
 
 
 
