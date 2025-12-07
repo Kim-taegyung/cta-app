@@ -389,12 +389,21 @@ def render_daily_view():
     with st.expander("➕ 할 일 추가 / ✨ AI Copilot", expanded=True):
         c_ai1, c_ai2 = st.columns([3, 1], vertical_alignment="bottom")
         
-        # Form Start
         with st.form("add_tsk", clear_on_submit=False):
             c1, c2 = st.columns([1, 1])
-            i_time = c1.time_input("시작", datetime.time(9,0))
-            i_cat = c_cat = c2.selectbox("카테고리", PROJECT_CATEGORIES)
-            i_main = st.text_input("메인 목표")
+            i_time = c1.time_input("시작 시간", datetime.time(9,0))
+            i_cat = c2.selectbox("카테고리", PROJECT_CATEGORIES, key="add_cat")
+            
+            i_main = st.text_input("메인 목표 (Task)")
+            
+            # [NEW] 업무/사업 카테고리일 때만 추가 옵션 노출
+            i_due = None
+            i_prio = "보통"
+            
+            if i_cat == "업무/사업":
+                c3, c4 = st.columns(2)
+                i_due = c3.time_input("마감 시간 (선택)", value=None) # 선택사항
+                i_prio = c4.selectbox("중요도", ["🔥 높음", "⚡ 보통", "☕ 낮음"], index=1)
             
             # AI 버튼은 form_submit_button이어야 함
             ai_clicked = st.form_submit_button("✨ AI 제안 받기")
@@ -575,4 +584,5 @@ with chat_col:
             ai_msg = {"role": "assistant", "content": resp}
             ai_msg.update(media)
             st.session_state.messages.append(ai_msg)
+
 
