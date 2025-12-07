@@ -108,7 +108,7 @@ def save_day_data(target_date, tasks, master_data):
         if cell: sh_m.update(range_name=f"A{cell.row}:D{cell.row}", values=[row_data])
         else: sh_m.append_row(row_data)
             
-        # Task Save
+        # Task Save (삭제 후 재입력)
         sh_d = doc.worksheet("Task_Details")
         all_records = sh_d.get_all_records()
         kept_records = [r for r in all_records if str(r.get("날짜")) != date_str]
@@ -196,11 +196,11 @@ if 'init' not in st.session_state:
     st.session_state.init = True
 
 # ---------------------------------------------------------
-# 4. 팝업 UI
+# 4. 팝업 UI (Dialogs)
 # ---------------------------------------------------------
 @st.dialog("📝 템플릿 관리", width="large")
 def manage_templates_modal():
-    st.caption("자주 사용하는 루틴을 세트로 만드세요.")
+    st.caption("자주 사용하는 루틴을 세트로 만드세요. (업무용은 여기서 만들면 '업무 템플릿' 팝업에 뜹니다)")
     with st.form("new_temp", clear_on_submit=True):
         c1, c2 = st.columns([1.5, 1])
         t_name = c1.text_input("템플릿명 (예: 평일, 업무기본)")
@@ -228,10 +228,12 @@ def manage_templates_modal():
                 st.rerun()
     else: st.info("없음")
 
+# [NEW] 업무 템플릿 (체크리스트 & 문맥기억)
 @st.dialog("💼 업무 루틴 가져오기", width="large")
 def manage_work_template_modal():
     st.caption("오늘 처리할 업무를 선택하세요.")
     
+    # 1. 문맥 기억 (Context Saver)
     last_work = get_last_work_context()
     if last_work:
         st.markdown("##### 🔔 어제 하던 일 (Context)")
@@ -242,9 +244,13 @@ def manage_work_template_modal():
             if last_work.get('할일_Sub'): c2.caption(f"└ {last_work['할일_Sub']}")
     
     st.markdown("---")
+    
+    # 2. 업무 템플릿 (체크리스트)
     st.markdown("##### 📋 업무 리스트 (선택)")
     templates = get_templates()
+    # 카테고리가 '업무/사업'인 것만 필터링
     work_templates = [t for t in templates if t['카테고리'] == '업무/사업']
+    
     selected_works = []
     
     if work_templates:
@@ -253,10 +259,12 @@ def manage_work_template_modal():
             with cols[i % 2]:
                 if st.checkbox(f"[{t['시간']}] {t['할일_Main']}", key=f"wk_{i}"):
                     selected_works.append(t)
-    else: st.info("등록된 업무 템플릿이 없습니다.")
+    else:
+        st.info("등록된 업무 템플릿이 없습니다. '템플릿 관리'에서 추가하세요.")
 
     st.markdown("---")
     if st.button("선택 항목 추가하기", type="primary", use_container_width=True):
+        # 문맥 추가
         if last_work and st.session_state.get("ctx_chk"):
             st.session_state.tasks.append({
                 "ID": str(uuid.uuid4()), "시간": datetime.datetime.now().strftime("%H:%M"), 
@@ -264,6 +272,8 @@ def manage_work_template_modal():
                 "할일_Sub": last_work['할일_Sub'], "상태": "예정", "소요시간(초)": 0, "참고자료": last_work['참고자료'],
                 "accumulated": 0, "is_running": False
             })
+        
+        # 체크리스트 추가
         for wt in selected_works:
             st.session_state.tasks.append({
                 "ID": str(uuid.uuid4()), "시간": wt['시간'], "카테고리": wt['카테고리'],
@@ -271,6 +281,7 @@ def manage_work_template_modal():
                 "상태": "예정", "소요시간(초)": 0, "참고자료": "",
                 "accumulated": 0, "is_running": False
             })
+        
         st.rerun()
 
 @st.dialog("🎯 목표 관리")
@@ -351,10 +362,12 @@ def render_daily_view():
     with c1:
         st.session_state.master['wakeup'] = st.checkbox("☀️ 7시 기상 성공!", value=st.session_state.master['wakeup'])
     with c2:
+        # [학습 템플릿] (세트 메뉴)
         templates = get_templates()
         if templates:
             study_templates = [t for t in templates if t['카테고리'] != '업무/사업']
             t_names = sorted(list(set([t['템플릿명'] for t in study_templates])))
+            
             c_sel, c_btn = st.columns([3, 1])
             sel_temp = c_sel.selectbox("📚 학습 루틴", ["선택하세요"] + t_names, label_visibility="collapsed")
             if c_btn.button("적용", use_container_width=True):
@@ -372,41 +385,42 @@ def render_daily_view():
     
     st.divider()
 
+    # [할 일 입력 + AI]
     with st.expander("➕ 할 일 추가 / ✨ AI Copilot", expanded=True):
         c_ai1, c_ai2 = st.columns([3, 1], vertical_alignment="bottom")
+        
+        # Form Start
         with st.form("add_tsk", clear_on_submit=False):
             c1, c2 = st.columns([1, 1])
             i_time = c1.time_input("시작", datetime.time(9,0))
-            i_cat = c_cat.selectbox("카테고리", PROJECT_CATEGORIES)
+            i_cat = c_cat = c2.selectbox("카테고리", PROJECT_CATEGORIES)
             i_main = st.text_input("메인 목표")
             
-            # Form Submit Button Logic
+            # AI 버튼은 form_submit_button이어야 함
+            ai_clicked = st.form_submit_button("✨ AI 제안 받기")
+            
+            # 세부 목표 필드
+            def_sub = st.session_state.get("ai_suggestion_temp", "")
+            i_sub = st.text_area("세부 목표", value=def_sub, height=100)
+            i_link = st.text_input("링크")
+            
+            # 등록 버튼
             submitted = st.form_submit_button("등록", type="primary")
             
-            # AI 버튼은 form_submit_button이 아니라 일반 버튼으로 하거나, form_submit_button으로 처리 후 로직 분기
-            # 여기서는 편의상 AI 버튼을 form 밖에 두는 것이 좋으나 layout 제약으로 form 안에서 submit으로 처리
-            ai_submitted = st.form_submit_button("✨ AI 제안")
-
-            if ai_submitted:
+            if ai_clicked:
                 st.session_state.ai_suggestion_temp = generate_ai_suggestion(i_cat, i_main)
                 st.rerun()
 
             if submitted:
-                # AI 제안된 sub task가 있다면 사용
-                def_sub = st.session_state.get("ai_suggestion_temp", "")
                 st.session_state.tasks.append({
                     "ID": str(uuid.uuid4()), "시간": i_time.strftime("%H:%M"), "카테고리": i_cat,
-                    "할일_Main": i_main, "할일_Sub": def_sub, "상태": "예정",
-                    "소요시간(초)": 0, "참고자료": "", "accumulated": 0, "is_running": False
+                    "할일_Main": i_main, "할일_Sub": i_sub, "상태": "예정",
+                    "소요시간(초)": 0, "참고자료": i_link, "accumulated": 0, "is_running": False
                 })
                 st.session_state.ai_suggestion_temp = ""
                 st.rerun()
-        
-        # AI 제안 결과 보여주기 (Form 밖)
-        if st.session_state.ai_suggestion_temp:
-            st.info(f"💡 AI 추천:\n{st.session_state.ai_suggestion_temp}")
 
-    # 통계 변수 초기화
+    # [통계 변수 초기화 - 에러 방지]
     total_focus_sec = 0
     cat_stats = {cat: 0 for cat in PROJECT_CATEGORIES}
 
@@ -505,7 +519,7 @@ with st.sidebar:
             st.session_state.telegram_id = tel_id
             save_setting("telegram_id", tel_id)
 
-# 3단 분할 레이아웃
+# 3단 분할
 main_col, chat_col = st.columns([2.2, 1])
 
 with main_col:
