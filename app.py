@@ -413,20 +413,25 @@ def render_daily_view():
             i_sub = st.text_area("세부 목표", value=def_sub, height=100)
             i_link = st.text_input("링크")
             
-            # 등록 버튼
-            submitted = st.form_submit_button("등록", type="primary")
-            
-            if ai_clicked:
-                st.session_state.ai_suggestion_temp = generate_ai_suggestion(i_cat, i_main)
-                st.rerun()
-
-            if submitted:
-                st.session_state.tasks.append({
-                    "ID": str(uuid.uuid4()), "시간": i_time.strftime("%H:%M"), "카테고리": i_cat,
-                    "할일_Main": i_main, "할일_Sub": i_sub, "상태": "예정",
-                    "소요시간(초)": 0, "참고자료": i_link, "accumulated": 0, "is_running": False
-                })
-                st.session_state.ai_suggestion_temp = ""
+            # [등록 버튼 로직 수정]
+            if st.form_submit_button("등록", type="primary"):
+                # 업무 전용 데이터 추가
+                task_data = {
+                    "ID": str(uuid.uuid4()), 
+                    "시간": i_time.strftime("%H:%M"), 
+                    "카테고리": i_cat,
+                    "할일_Main": i_main, 
+                    "할일_Sub": i_sub, # (위에서 정의했다고 가정)
+                    "상태": "예정", 
+                    "소요시간(초)": 0, 
+                    "참고자료": i_link, 
+                    "accumulated": 0, 
+                    "is_running": False,
+                    # [NEW] 신규 필드
+                    "마감시간": i_due.strftime("%H:%M") if i_due else "",
+                    "중요도": i_prio if i_cat == "업무/사업" else "" 
+                }
+                st.session_state.tasks.append(task_data)
                 st.rerun()
 
     # [통계 변수 초기화 - 에러 방지]
@@ -584,5 +589,6 @@ with chat_col:
             ai_msg = {"role": "assistant", "content": resp}
             ai_msg.update(media)
             st.session_state.messages.append(ai_msg)
+
 
 
